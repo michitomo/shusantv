@@ -31,13 +31,16 @@
     padding: 0 4px; flex-shrink: 0; }
   .quality:empty { display: none; }
   .tile { container-type: size; }
-  /* テロップ風バブル字幕: 固定長で区切り、直近2バブルを表示(古い方は薄く) */
-  .asr { position: absolute; left: 6%; right: 6%; bottom: 12%; pointer-events: none; text-align: center;
-    line-height: 1.3; display: flex; flex-direction: column; align-items: center; gap: .35em; }
+  /* 字幕: 灰色バブル1個に直近4行(isFinal=改行) */
+  .asr { position: absolute; left: 6%; right: 6%; bottom: 10%; pointer-events: none;
+    display: flex; justify-content: center; }
   .asr:empty { display: none; }
-  .asr .bubble { background: rgba(0,0,0,.72); border-radius: .5em; padding: .22em .6em;
-    font-size: 5.5cqw; font-weight: 700; color: #ffd; max-width: 100%; }
-  .asr .bubble.prev { opacity: .55; font-size: 4.5cqw; }
+  .asr .bubble { background: rgba(0, 0, 0, .72); border-radius: .5em; padding: .3em .6em;
+    font-size: 3.4cqw; line-height: 1.35; font-weight: 700; color: #ffd; width: 88%; box-sizing: border-box;
+    text-align: left; white-space: pre-line; word-break: auto-phrase;
+    /* 高さは内容に応じて伸び、2行分を上限に古い行から隠れる(下端=最新を常に表示) */
+    max-height: calc(1.35em * 3 + .6em - 4px); overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; }
+  .asr .bubble .old { color: #b9b9ae; }
   .pending video { opacity: .35; }
   .empty { padding: 40px; color: #888; text-align: center; }
   #gate { position: fixed; inset: 0; background: rgba(0,0,0,.75); display: flex; align-items: center;
@@ -105,7 +108,6 @@ function initAudio(t) {
 // ---- 衆議院: ブラウザ内蔵オンデバイス音声認識 ----
 // 注意: SODA(SpeechRecognition.install)導入直後はChrome完全再起動が必要。
 // 未ロードだと "network" エラーで即終了する(Chrome 149時点の誤報告, crbug 520350511)
-const CHUNK = 26; // バブル1個あたりの文字数
 function startAsr(t) {
   const dest = actx.createMediaStreamDestination();
   t.audio.src.connect(dest);
@@ -114,35 +116,86 @@ function startAsr(t) {
   rec.continuous = true;
   rec.interimResults = true;
   rec.processLocally = true;
+  // コンテキストバイアシング: ウォッチ語+国会用語を優先語彙として渡す(対応環境のみ)
+  if (window.SpeechRecognitionPhrase) {
+    try {
+      const terms = [...watchWords(), "委員長", "委員会", "質疑", "答弁", "参考人", "理事", "法案", "附帯決議"];
+      rec.phrases = terms.map((w) => new SpeechRecognitionPhrase(w, 5.0));
+    } catch (e) { console.warn("phrases未対応:", e); }
+  }
   const asrEl = t.el.querySelector(".asr");
   let errors = 0;
-  // 確定済みテキスト長を覚えておき、末尾だけを文節分割し直す(確定済みバブルは動かない)
+  // 確定済みテキスト長を覚えておき、末尾だけを文節分割し直す(確定済みの行は動かない)
   let committedLen = 0;
-  let prevBubble = "";
-  rec.onresult = (e) => {
-    let full = "";
-    for (const r of e.results) full += r[0].transcript;
-    if (full.length < committedLen) { committedLen = 0; prevBubble = ""; } // セッション再開でリセット
-    const tail = full.slice(committedLen);
-    // 文節単位でCHUNK文字以内の行に詰める。溢れた行は確定してprevへ
-    const phrases = window.budouxParser ? window.budouxParser.parse(tail) : [tail];
-    let line = "";
-    for (const p of phrases) {
-      if (line && line.length + p.length > CHUNK) {
-        prevBubble = line;
-        committedLen += line.length;
-        line = "";
-      }
-      line += p;
-    }
+  let lines = [];
+  let cur = "";       // 認識途中の最終行
+  let fullLen = 0;
+  let brightBase = 0; // この文字位置までは「古い」= グレー表示
+  let marks = [];     // [文字位置, 時刻] 新しい文字の出現記録(時間フェード用)
+  const FADE = 500, TS = "\u2009";
+
+  // 直近FADE ms以内に出た文字だけ明色、それ以前はグレー
+  function render() {
+    const now = performance.now();
+    for (const [len, tm] of marks) if (now - tm > FADE) brightBase = Math.max(brightBase, len);
+    marks = marks.filter(([, tm]) => now - tm <= FADE);
+    const view = [...lines, cur].filter(Boolean).slice(-6);
     asrEl.innerHTML = "";
-    for (const [text, cls] of [[prevBubble, "bubble prev"], [line, "bubble"]]) {
-      if (!text) continue;
-      const b = document.createElement("div");
-      b.className = cls;
-      b.textContent = text;
-      asrEl.appendChild(b);
+    if (!view.length) return;
+    const b = document.createElement("div");
+    b.className = "bubble";
+    const inner = document.createElement("div"); // flex(下端寄せ)の単一子要素として通常フローで組む
+    let cursor = fullLen - view.join("").length;
+    view.forEach((l, i) => {
+      const phrases = window.budouxParser ? window.budouxParser.parse(l) : [l];
+      const oldParts = [], newParts = [];
+      let pos = cursor;
+      for (const ph of phrases) {
+        (pos + ph.length <= brightBase ? oldParts : newParts).push(ph);
+        pos += ph.length;
+      }
+      if (oldParts.length) {
+        const sp = document.createElement("span");
+        sp.className = "old";
+        sp.textContent = oldParts.join(TS) + (newParts.length ? TS : "");
+        inner.appendChild(sp);
+      }
+      if (newParts.length) {
+        const sp = document.createElement("span");
+        sp.textContent = newParts.join(TS);
+        inner.appendChild(sp);
+      }
+      cursor += l.length;
+      if (i < view.length - 1) inner.appendChild(document.createTextNode("\n"));
+    });
+    b.appendChild(inner);
+    asrEl.appendChild(b);
+  }
+  t.capTimer = setInterval(render, 200); // 結果が来なくてもフェードを進める
+  // ポーズ(isFinal)ごとに句読点を補う: 文末形なら「。」、続きそうなら「、」
+  const punct = (s) =>
+    !s || /[。、．，！？!?]$/.test(s) ? s
+    : /(です|ます|でした|ました|ません|ございます|であります)(ね|よ)?$/.test(s) ? s + "。"
+    : s + "、";
+  rec.onresult = (e) => {
+    let full = "", finalLen = 0;
+    for (const r of e.results) {
+      full += r.isFinal ? punct(r[0].transcript) : r[0].transcript;
+      if (r.isFinal) finalLen = full.length;
     }
+    if (full.length < committedLen) { committedLen = 0; lines = []; cur = ""; brightBase = 0; marks = []; fullLen = 0; }
+    // 改行は発話の切れ目(エンジンがポーズで確定したisFinal境界)のみ。
+    // 長い発話はバブル内の自然折り返し(文節の極細スペース位置)に任せる
+    cur = full.slice(committedLen);
+    if (cur && committedLen + cur.length <= finalLen) {
+      lines.push(cur);
+      committedLen += cur.length;
+      cur = "";
+    }
+    if (lines.length > 8) lines = lines.slice(-4); // 古い行は破棄
+    if (full.length > fullLen) marks.push([fullLen, performance.now()]); // fullLen〜full.lengthが新出
+    fullLen = full.length;
+    render();
     detect(t, full.slice(-100));
     errors = 0;
   };
@@ -238,6 +291,7 @@ function removeTile(id) {
   const t = tiles.get(id);
   if (!t) return;
   if (t.rec) { t.rec.onend = null; t.rec.stop(); }
+  if (t.capTimer) clearInterval(t.capTimer);
   t.hls.destroy();
   t.el.remove();
   tiles.delete(id);
