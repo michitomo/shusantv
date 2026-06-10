@@ -133,11 +133,14 @@ function startAsr(t) {
   let brightBase = 0; // この文字位置までは「古い」= グレー表示
   let marks = [];     // [文字位置, 時刻] 新しい文字の出現記録(時間フェード用)
   const FADE = 500, TS = "\u2009";
+  const IDLE_HIDE = 30_000; // 新しい発言が来なければ字幕を消す(散会後に残さない)
+  let lastGrowth = 0;
 
   // 直近FADE ms以内に出た文字だけ明色、それ以前はグレー。改行なし(自然折り返しのみ)
   let lastFull = "";
   function render() {
     const now = performance.now();
+    if (lastGrowth && now - lastGrowth > IDLE_HIDE) { asrEl.innerHTML = ""; return; }
     for (const [len, tm] of marks) if (now - tm > FADE) brightBase = Math.max(brightBase, len);
     marks = marks.filter(([, tm]) => now - tm <= FADE);
     const text = lastFull.slice(-150); // 表示は末尾のみ(3行高でクリップされる)
@@ -177,7 +180,7 @@ function startAsr(t) {
     let full = "";
     for (const r of e.results) full += r.isFinal ? punct(r[0].transcript) : r[0].transcript;
     if (full.length < lastFull.length) { brightBase = 0; marks = []; } // セッション再開でリセット
-    if (full.length > lastFull.length) marks.push([lastFull.length, performance.now()]);
+    if (full.length > lastFull.length) { marks.push([lastFull.length, performance.now()]); lastGrowth = performance.now(); }
     lastFull = full;
     render();
     detect(t, full.slice(-100));
