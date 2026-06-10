@@ -35,14 +35,14 @@
     display: flex; justify-content: center; }
   .asr:empty { display: none; }
   .asr .bubble { background: rgba(0, 0, 0, .72); border-radius: .5em; padding: .3em .6em;
-    font-size: 3.4cqw; line-height: 1.35; font-weight: 700; color: #ffd; width: 88%; box-sizing: border-box;
+    font-size: max(3.4cqw, 14px); line-height: 1.35; font-weight: 700; color: #ffd; width: 88%; box-sizing: border-box;
     text-align: left; white-space: pre-line; word-break: auto-phrase;
     /* 高さは内容に応じて伸び、2行分を上限に古い行から隠れる(下端=最新を常に表示) */
     max-height: calc(1.35em * 3 + .6em - 4px); overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; }
   .asr .bubble .old { color: #b9b9ae; }
   /* フォーカスモード中のサブ画面: 字幕を大きく・5行まで */
   #grid.focusmode .tile:not(.unmuted) .bubble {
-    font-size: 4cqw;
+    font-size: max(4cqw, 14px);
     max-height: calc(1.35em * 5 + .6em - 4px);
   }
   .pending video { opacity: .35; }
