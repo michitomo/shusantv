@@ -334,6 +334,8 @@ function relayout() {
   for (const t of tiles.values()) t.el.style.gridArea = "";
   if (focusedId && tiles.has(focusedId) && n > 1) {
     const others = n - 1;
+    grid.style.justifyContent = "";
+    grid.style.alignContent = "";
     grid.style.gridTemplateColumns = "4fr 1fr";
     grid.style.gridTemplateRows = `repeat(${others}, 1fr)`;
     tiles.get(focusedId).el.style.gridArea = `1 / 1 / ${others + 1} / 2`;
@@ -341,7 +343,7 @@ function relayout() {
     for (const [tid, t] of tiles) if (tid !== focusedId) t.el.style.gridArea = `${row++} / 2`;
     return;
   }
-  let best = { cols: 1, area: 0 };
+  let best = { cols: 1, area: 0, w: 0, h: 0 };
   for (let cols = 1; cols <= n; cols++) {
     const rows = Math.ceil(n / cols);
     let w = (W - GAP * (cols - 1)) / cols;
@@ -349,11 +351,15 @@ function relayout() {
     const aspect = w / h;
     if (aspect > 16 / 9) w = h * 16 / 9;
     else if (aspect < 4 / 3) h = w * 3 / 4;
-    if (w * h > best.area) best = { cols, area: w * h };
+    if (w * h > best.area) best = { cols, area: w * h, w, h };
   }
-  grid.style.gridTemplateColumns = `repeat(${best.cols}, 1fr)`;
-  grid.style.gridTemplateRows = "";
-  grid.style.gridAutoRows = "1fr";
+  // セル寸法を明示し(アスペクト比4:3〜16:9に収めた値)、余りは余白として中央寄せ
+  const rows = Math.ceil(n / best.cols);
+  grid.style.gridTemplateColumns = `repeat(${best.cols}, ${best.w}px)`;
+  grid.style.gridTemplateRows = `repeat(${rows}, ${best.h}px)`;
+  grid.style.gridAutoRows = "";
+  grid.style.justifyContent = "center";
+  grid.style.alignContent = "center";
 }
 window.addEventListener("resize", relayout);
 
