@@ -57,6 +57,11 @@
 </header>
 <div id="grid"></div>
 <div id="gate">クリックで開始（音声・発言認識の有効化）</div>
+<script type="module">
+// BudouX: 文節相当の区切りで字幕バブルを組む(Google製・Chrome の word-break:auto-phrase と同等)
+import { loadDefaultJapaneseParser } from "https://cdn.jsdelivr.net/npm/budoux@0.6.2/+esm";
+window.budouxParser = loadDefaultJapaneseParser();
+</script>
 <script>
 const grid = document.getElementById("grid");
 const statusEl = document.getElementById("status");
@@ -111,18 +116,31 @@ function startAsr(t) {
   rec.processLocally = true;
   const asrEl = t.el.querySelector(".asr");
   let errors = 0;
+  // 確定済みテキスト長を覚えておき、末尾だけを文節分割し直す(確定済みバブルは動かない)
+  let committedLen = 0;
+  let prevBubble = "";
   rec.onresult = (e) => {
-    // 全文をCHUNK文字ごとに区切り、直近2バブルを表示(境界が安定するので文字が流れない)
     let full = "";
     for (const r of e.results) full += r[0].transcript;
-    const start = Math.max(0, Math.floor((full.length - 1) / CHUNK) - 1) * CHUNK;
-    const chunks = [];
-    for (let i = start; i < full.length; i += CHUNK) chunks.push(full.slice(i, i + CHUNK));
+    if (full.length < committedLen) { committedLen = 0; prevBubble = ""; } // セッション再開でリセット
+    const tail = full.slice(committedLen);
+    // 文節単位でCHUNK文字以内の行に詰める。溢れた行は確定してprevへ
+    const phrases = window.budouxParser ? window.budouxParser.parse(tail) : [tail];
+    let line = "";
+    for (const p of phrases) {
+      if (line && line.length + p.length > CHUNK) {
+        prevBubble = line;
+        committedLen += line.length;
+        line = "";
+      }
+      line += p;
+    }
     asrEl.innerHTML = "";
-    for (let i = 0; i < chunks.length; i++) {
+    for (const [text, cls] of [[prevBubble, "bubble prev"], [line, "bubble"]]) {
+      if (!text) continue;
       const b = document.createElement("div");
-      b.className = "bubble" + (i < chunks.length - 1 ? " prev" : "");
-      b.textContent = chunks[i];
+      b.className = cls;
+      b.textContent = text;
       asrEl.appendChild(b);
     }
     detect(t, full.slice(-100));
