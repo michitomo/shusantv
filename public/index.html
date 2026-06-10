@@ -100,8 +100,13 @@ function startAsr(t) {
     detect(t, text);
     errors = 0;
   };
-  rec.onerror = (e) => {
+  rec.onerror = async (e) => {
     asrEl.textContent = `⚠ ASR: ${e.error}`;
+    if (e.error === "language-not-supported" && SR.available) {
+      const a = await SR.available({ langs: ["ja-JP"], processLocally: true });
+      asrEl.textContent = `⚠ ASR: lang-not-supported (available=${a})`;
+      if (a === "downloadable") SR.install({ langs: ["ja-JP"], processLocally: true });
+    }
     if (++errors > 5) rec.onend = null;
   };
   const start = () => {
