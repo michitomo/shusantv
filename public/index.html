@@ -23,6 +23,7 @@
   .badge.sangiin { background: #7a3d5a; }
   .muteicon { margin-left: auto; opacity: .7; }
   .quality { font-size: 11px; font-weight: 400; color: #999; flex-shrink: 0; }
+  .tile video::cue { background: rgba(0,0,0,.6); font-size: 14px; }
   .pending video { opacity: .35; }
   .empty { padding: 40px; color: #888; text-align: center; }
 </style>
@@ -56,7 +57,11 @@ function makeTile(s) {
     </div>`;
   el.querySelector(".name").textContent = `${s.time} ${s.name}`;
   const video = el.querySelector("video");
-  const hls = new Hls({ capLevelToPlayerSize: false, startLevel: 0, maxBufferLength: 15 });
+  const hls = new Hls({ capLevelToPlayerSize: false, startLevel: 0, maxBufferLength: 15, subtitleDisplay: true });
+  // 参議院は配信にWebVTT字幕トラックがある(衆議院にはない)。あれば有効化
+  hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, () => {
+    if (hls.subtitleTracks.length) hls.subtitleTrack = 0;
+  });
   const t = { el, video, hls, stream: s, lowest: 0, highest: 0 };
   hls.on(Hls.Events.MANIFEST_PARSED, () => {
     // ABRに任せず明示切替(2段しかないため)。nextLevelはバッファをフラッシュしないので滑らか
