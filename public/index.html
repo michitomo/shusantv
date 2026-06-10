@@ -211,10 +211,31 @@ function startAsr(t) {
 const watchInput = document.getElementById("watch");
 watchInput.value = localStorage.getItem("watchlist") || "";
 watchInput.addEventListener("change", () => localStorage.setItem("watchlist", watchInput.value));
-const watchWords = () => watchInput.value.split(/[,、，\s]+/).map((w) => w.trim()).filter(Boolean);
+// 「|」で別名登録可(例: 塩川|しおかわ)。カタカナはひらがなに正規化して比較
+const normalize = (s) => s.replace(/[ァ-ヶ]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0x60));
+const watchWords = () =>
+  watchInput.value.split(/[,、，\s]+/).map((w) => w.trim()).filter(Boolean)
+    .flatMap((w) => w.split("|").map((a) => normalize(a.trim())).filter(Boolean));
 
-function detect(t, text) {
-  const hit = watchWords().find((w) => text.includes(w));
+// 編集距離1以内の部分文字列がtextに含まれるか(文字起こしの1文字ミスを許容)
+function fuzzyIncludes(text, word) {
+  if (text.includes(word)) return true;
+  if (word.length < 4) return false; // 短語は誤爆しやすいので完全一致のみ
+  const n = word.length;
+  outer: for (let i = 0; i + n - 1 <= text.length - 1; i++) {
+    // 置換1文字: 同長窓と比較
+    let diff = 0;
+    for (let j = 0; j < n && i + j < text.length; j++) {
+      if (text[i + j] !== word[j] && ++diff > 1) continue outer;
+    }
+    if (diff <= 1 && i + n <= text.length) return true;
+  }
+  return false;
+}
+
+function detect(t, rawText) {
+  const text = normalize(rawText);
+  const hit = watchWords().find((w) => fuzzyIncludes(text, w));
   if (!hit) return;
   t.hitUntil = Date.now() + 90_000; // ヒット表示は90秒持続(発言が続く想定)
   t.el.classList.add("hit");
