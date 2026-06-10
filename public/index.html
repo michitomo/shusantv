@@ -91,17 +91,25 @@ function startAsr(t) {
   rec.continuous = true;
   rec.interimResults = true;
   rec.processLocally = true;
+  const asrEl = t.el.querySelector(".asr");
   let errors = 0;
   rec.onresult = (e) => {
     const last = e.results[e.results.length - 1];
     const text = last[0].transcript;
-    t.el.querySelector(".asr").textContent = text.slice(-60);
+    asrEl.textContent = text.slice(-60);
     detect(t, text);
     errors = 0;
   };
-  rec.onerror = (e) => { if (++errors > 5) rec.onend = null; };
-  rec.onend = () => setTimeout(() => { try { rec.start(dest.stream.getAudioTracks()[0]); } catch {} }, 1000);
-  try { rec.start(dest.stream.getAudioTracks()[0]); } catch {}
+  rec.onerror = (e) => {
+    asrEl.textContent = `⚠ ASR: ${e.error}`;
+    if (++errors > 5) rec.onend = null;
+  };
+  const start = () => {
+    try { rec.start(dest.stream.getAudioTracks()[0]); asrEl.textContent = "🎤 認識待機…"; }
+    catch (err) { asrEl.textContent = `⚠ ASR start: ${err.message}`; }
+  };
+  rec.onend = () => setTimeout(start, 1000);
+  start();
   t.rec = rec;
 }
 
