@@ -5,50 +5,100 @@
 <title>shusantv — 国会中継グリッド</title>
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.20/dist/hls.min.js"></script>
 <style>
-  :root { color-scheme: dark; }
-  body { margin: 0; background: #111; color: #eee; font-family: system-ui, sans-serif; }
-  header { display: flex; align-items: baseline; gap: 12px; padding: 6px 14px; flex-wrap: wrap; }
-  header h1 { font-size: 16px; margin: 0; }
-  header .status { color: #999; font-size: 12px; }
+  :root {
+    color-scheme: dark;
+    --glass: rgba(18, 18, 22, .55);
+    --glass-border: rgba(255, 255, 255, .08);
+    --accent: #5fe0b7;
+    --tally: #ff3b30;
+    --shu: #5b9bd5;
+    --san: #d57aa5;
+  }
+  body { margin: 0; background: #050507; color: #eee;
+    font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", system-ui, sans-serif; }
+
+  /* ガラスのヘッダーバー */
+  header { display: flex; align-items: center; gap: 14px; padding: 8px 16px; flex-wrap: wrap;
+    background: var(--glass); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    border-bottom: 1px solid var(--glass-border); }
+  header h1 { font-size: 14px; margin: 0; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }
+  header h1::before { content: "●"; color: var(--tally); font-size: 9px; vertical-align: 2px; margin-right: 7px;
+    animation: pulse 2.4s ease-in-out infinite; }
+  header .status { color: #9a9aa2; font-size: 11px; letter-spacing: .02em; }
   header .credit { margin-left: auto; }
-  header .credit a { color: #8ab; }
-  #watch { width: 280px; background: #222; border: 1px solid #444; color: #eee; border-radius: 4px;
-    padding: 2px 6px; font-size: 12px; }
-  label.auto { font-size: 12px; color: #bbb; user-select: none; }
-  #grid { display: grid; gap: 6px; padding: 0 6px 6px; height: calc(100vh - 44px); box-sizing: border-box; }
-  .tile { position: relative; background: #000; border: 2px solid #333; border-radius: 6px; overflow: hidden; cursor: pointer; min-height: 0; min-width: 0; }
-  .tile.unmuted { border-color: #e5b545; }
-  .tile.hit { border-color: #e54545; box-shadow: 0 0 12px #e5454588; }
+  header .credit a { color: #7da7c7; text-decoration: none; }
+  header .credit a:hover { text-decoration: underline; }
+  #watch { width: 300px; background: rgba(255,255,255,.06); border: 1px solid var(--glass-border); color: #eee;
+    border-radius: 999px; padding: 4px 12px; font-size: 12px; outline: none; transition: border-color .2s; }
+  #watch:focus { border-color: var(--accent); }
+  label.auto { font-size: 11px; color: #9a9aa2; user-select: none; display: flex; align-items: center; gap: 4px; }
+  label.auto input { accent-color: var(--accent); }
+
+  #grid { display: grid; gap: 8px; padding: 8px; height: calc(100vh - 49px); box-sizing: border-box; }
+
+  /* タイル: 枠は消し、わずかな境界線と影 */
+  .tile { position: relative; background: #000; border-radius: 10px; overflow: hidden; cursor: pointer;
+    min-height: 0; min-width: 0; container-type: size;
+    outline: 1px solid var(--glass-border); outline-offset: -1px;
+    box-shadow: 0 4px 24px rgba(0,0,0,.5);
+    transition: outline-color .25s, box-shadow .25s, filter .25s; }
+  .tile:hover { filter: brightness(1.06); }
+  .tile.unmuted { outline: 2px solid var(--accent); outline-offset: -2px;
+    box-shadow: 0 4px 28px rgba(95,224,183,.18); }
+  .tile.hit { outline: 2px solid var(--tally); outline-offset: -2px;
+    box-shadow: 0 0 26px rgba(255,59,48,.35); }
   .tile video { width: 100%; height: 100%; display: block; background: #000; object-fit: cover; }
-  .tile .label { position: absolute; left: 0; right: 0; bottom: 0; padding: 6px 10px; font-size: 16px; font-weight: 600;
-    background: linear-gradient(transparent, rgba(0,0,0,.85)); display: flex; gap: 8px; align-items: center; }
-  .badge { font-size: 13px; padding: 1px 7px; border-radius: 3px; flex-shrink: 0; }
-  .badge.shugiin { background: #2d5a88; }
-  .badge.sangiin { background: #7a3d5a; }
-  .muteicon { margin-left: auto; opacity: .7; }
-  .quality { font-size: 10px; font-weight: 700; color: #7c5; border: 1px solid #7c5; border-radius: 3px;
-    padding: 0 4px; flex-shrink: 0; }
+
+  /* タリーランプ (ウォッチヒット時) */
+  .tally { position: absolute; top: 8px; right: 8px; z-index: 2; display: none; align-items: center; gap: 6px;
+    background: rgba(0,0,0,.55); backdrop-filter: blur(8px); border: 1px solid rgba(255,59,48,.5);
+    color: #ff6b62; border-radius: 999px; padding: 2px 10px; font-size: 11px; font-weight: 800; letter-spacing: .12em; }
+  .tally::before { content: "●"; color: var(--tally); font-size: 9px; animation: pulse 1.1s ease-in-out infinite; }
+  .tile.hit .tally { display: flex; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+
+  /* 下部ラベル: ガラス帯 + 院カラードット */
+  .tile .label { position: absolute; left: 0; right: 0; bottom: 0; padding: 7px 12px;
+    font-size: 14px; font-weight: 600; letter-spacing: .02em;
+    background: linear-gradient(transparent, rgba(5,5,7,.72) 38%);
+    backdrop-filter: blur(2px);
+    display: flex; gap: 8px; align-items: center; }
+  .badge { font-size: 11px; font-weight: 800; flex-shrink: 0; display: flex; align-items: center; gap: 5px;
+    color: #c9c9cf; }
+  .badge::before { content: "●"; font-size: 8px; }
+  .badge.shugiin::before { color: var(--shu); }
+  .badge.sangiin::before { color: var(--san); }
+  .muteicon { margin-left: auto; opacity: .65; font-size: 12px; }
+  .quality { font-size: 9px; font-weight: 800; color: #8fce6a; border: 1px solid rgba(143,206,106,.55);
+    border-radius: 3px; padding: 0 4px; flex-shrink: 0; letter-spacing: .06em; }
   .quality:empty { display: none; }
-  .tile { container-type: size; }
-  /* 字幕: 灰色バブル1個に直近4行(isFinal=改行) */
-  .asr { position: absolute; left: 6%; right: 6%; bottom: 10%; pointer-events: none;
+
+  /* 字幕バブル: ガラス */
+  .asr { position: absolute; left: 6%; right: 6%; bottom: 11%; pointer-events: none;
     display: flex; justify-content: center; }
   .asr:empty { display: none; }
-  .asr .bubble { background: rgba(0, 0, 0, .72); border-radius: .5em; padding: .3em .6em;
-    font-size: max(3.4cqw, 14px); line-height: 1.35; font-weight: 700; color: #ffd; width: 88%; box-sizing: border-box;
+  .asr .bubble { background: rgba(10, 10, 14, .58); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    border: 1px solid var(--glass-border); border-radius: .6em; padding: .3em .65em;
+    font-size: max(3.4cqw, 14px); line-height: 1.35; font-weight: 600; color: #ffeebe;
+    width: 88%; box-sizing: border-box;
     text-align: left; white-space: pre-line; word-break: auto-phrase;
-    /* 高さは内容に応じて伸び、2行分を上限に古い行から隠れる(下端=最新を常に表示) */
-    max-height: calc(1.35em * 3 + .6em - 4px); overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; }
-  .asr .bubble .old { color: #b9b9ae; }
-  /* フォーカスモード中のサブ画面: 字幕を大きく・5行まで */
+    max-height: calc(1.35em * 3 + .6em - 4px); overflow: hidden;
+    display: flex; flex-direction: column; justify-content: flex-end; }
+  .asr .bubble .old { color: #a9a9a2; }
   #grid.focusmode .tile:not(.unmuted) .bubble {
     font-size: max(4cqw, 14px);
     max-height: calc(1.35em * 5 + .6em - 4px);
   }
-  .pending video { opacity: .35; }
-  .empty { padding: 40px; color: #888; text-align: center; }
-  #gate { position: fixed; inset: 0; background: rgba(0,0,0,.75); display: flex; align-items: center;
-    justify-content: center; font-size: 20px; cursor: pointer; z-index: 10; }
+  .pending video { opacity: .3; }
+  .empty { padding: 48px; color: #6a6a72; text-align: center; letter-spacing: .1em; }
+
+  /* 開始ゲート */
+  #gate { position: fixed; inset: 0; background: rgba(5,5,7,.6); backdrop-filter: blur(18px);
+    display: flex; flex-direction: column; gap: 10px; align-items: center; justify-content: center;
+    cursor: pointer; z-index: 10; }
+  #gate::before { content: "SHUSANTV"; font-size: 13px; font-weight: 800; letter-spacing: .3em; color: #9a9aa2; }
+  #gate::after { content: "クリックで字幕には音声認識を使用します(初回はモデルをダウンロード)";
+    font-size: 11px; color: #6a6a72; }
 </style>
 </head>
 <body>
@@ -262,6 +312,7 @@ function makeTile(s) {
   el.className = "tile" + (s.pending ? " pending" : "");
   el.innerHTML = `
     <video muted autoplay playsinline crossorigin="anonymous"></video>
+    <div class="tally">ON AIR</div>
     <div class="asr"></div>
     <div class="label">
       <span class="badge ${s.house}">${s.house === "shugiin" ? "衆" : "参"}</span>
@@ -358,7 +409,8 @@ setInterval(adjustQuality, 15_000);
 function relayout() {
   const n = tiles.size;
   if (!n) return;
-  const W = grid.clientWidth, H = grid.clientHeight, GAP = 6;
+  grid.style.height = `calc(100vh - ${document.querySelector("header").offsetHeight}px)`;
+  const W = grid.clientWidth, H = grid.clientHeight, GAP = 8;
   for (const t of tiles.values()) t.el.style.gridArea = "";
   if (focusedId && tiles.has(focusedId) && n > 1) {
     const others = n - 1;
@@ -412,9 +464,11 @@ async function probeShugiin(known) {
 
 async function refresh() {
   try {
-    const { streams, updatedAt, errors } = await (await fetch("streams.json", { cache: "no-store" })).json();
-    const knownRooms = new Set(streams.map((s) => s.id));
-    streams.push(...(await probeShugiin(knownRooms)));
+    const { streams, updatedAt, errors } = await (await fetch("streams.json" + location.search, { cache: "no-store" })).json();
+    if (!location.search.includes("demo")) {
+      const knownRooms = new Set(streams.map((s) => s.id));
+      streams.push(...(await probeShugiin(knownRooms)));
+    }
     const ids = new Set(streams.map((s) => s.id));
     for (const id of tiles.keys()) if (!ids.has(id)) removeTile(id);
     for (const s of streams) {
