@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>ASR test — SpeechRecognition + MediaStreamTrack</title>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.20/dist/hls.min.js"></script>
+<style>
+  :root { color-scheme: dark; }
+  body { background: #111; color: #eee; font-family: system-ui, sans-serif; margin: 16px; max-width: 900px; }
+  video { width: 480px; background: #000; display: block; margin: 8px 0; }
+  button { font-size: 14px; padding: 6px 14px; margin-right: 8px; }
+  input { width: 600px; }
+  #diag, #result { background: #1a1a1a; border: 1px solid #333; border-radius: 4px; padding: 8px;
+    font-family: ui-monospace, monospace; font-size: 12px; white-space: pre-wrap; margin: 8px 0; }
+  #result { min-height: 120px; }
+  .interim { color: #888; }
+</style>
+</head>
+<body>
+<h2>SpeechRecognition + MediaStreamTrack 検証</h2>
+<div>m3u8: <input id="url" placeholder="読み込み中…"></div>
+<video id="v" autoplay playsinline crossorigin="anonymous" controls></video>
+<div>
+  <button id="check">1. 機能チェック</button>
+  <button id="install">2. 日本語パック install</button>
+  <button id="start">3. 認識開始 (video音声)</button>
+  <button id="stop">停止</button>
+</div>
+<div id="diag"></div>
+<div id="result"></div>
+<script>
+const $ = (id) => document.getElementById(id);
+const diag = (m) => { $("diag").textContent += m + "\n"; console.log(m); };
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+// streams.json から衆議院の中継をデフォルト入力にする
+fetch("streams.json").then((r) => r.json()).then(({ streams }) => {
+  const s = streams.find((x) => x.house === "shugiin") || streams[0];
+  if (s) { $("url").value = s.m3u8; loadVideo(s.m3u8); diag(`デフォルト: ${s.name ?? s.id}`); }
+}).catch(() => diag("streams.json なし: m3u8を手で入れてください"));
+
+let hls;
+function loadVideo(url) {
+  hls?.destroy();
+  hls = new Hls();
+  hls.loadSource(url);
+  hls.attachMedia($("v"));
+}
+$("url").addEventListener("change", () => loadVideo($("url").value));
+
+$("check").onclick = async () => {
+  diag(`UA: ${navigator.userAgent}`);
+  diag(`SpeechRecognition: ${SR ? "あり" : "なし"}`);
+  if (!SR) return;
+  diag(`SR.available (静的メソッド): ${typeof SR.available}`);
+  diag(`SR.install: ${typeof SR.install}`);
+  const r = new SR();
+  diag(`instance.processLocally 対応: ${"processLocally" in r}`);
+  diag(`start() の引数長(MediaStreamTrack対応の目安): ${r.start.length}`);
+  if (typeof SR.available === "function") {
+    try {
+      diag(`available({ja-JP, local}): ${await SR.available({ langs: ["ja-JP"], processLocally: true })}`);
+      diag(`available({ja-JP, server可}): ${await SR.available({ langs: ["ja-JP"], processLocally: false })}`);
+    } catch (e) { diag(`available() エラー: ${e}`); }
+  }
+};
+
+$("install").onclick = async () => {
+  if (typeof SR?.install !== "function") return diag("SR.install なし");
+  try {
+    diag("install 開始…(モデルDLに数分かかることあり)");
+    diag(`install 結果: ${await SR.install({ langs: ["ja-JP"], processLocally: true })}`);
+  } catch (e) { diag(`install エラー: ${e}`); }
+};
+
+let rec;
+$("start").onclick = () => {
+  if (!SR) return diag("SpeechRecognition なし");
+  const stream = $("v").captureStream();
+  const track = stream.getAudioTracks()[0];
+  diag(`audioTrack: ${track ? track.label || "(無名)" : "なし"}`);
+  rec = new SR();
+  rec.lang = "ja-JP";
+  rec.continuous = true;
+  rec.interimResults = true;
+  try { rec.processLocally = true; } catch {}
+  rec.onresult = (e) => {
+    let final = "", interim = "";
+    for (const r of e.results) (r.isFinal ? (final += r[0].transcript + "\n") : (interim += r[0].transcript));
+    $("result").innerHTML = final.replace(/</g, "&lt;") + `<span class="interim">${interim.replace(/</g, "&lt;")}</span>`;
+  };
+  rec.onerror = (e) => diag(`onerror: ${e.error} ${e.message || ""}`);
+  rec.onend = () => diag("onend (認識終了)");
+  try {
+    if (track && rec.start.length >= 1) {
+      rec.start(track); // MediaStreamTrack 対応版
+      diag("rec.start(track) 呼び出し成功 → 認識中…");
+    } else {
+      rec.start(); // 旧API(マイクのみ)へのフォールバック
+      diag("⚠ track非対応: rec.start() (マイク入力)で開始");
+    }
+  } catch (e) { diag(`start エラー: ${e}`); }
+};
+
+$("stop").onclick = () => rec?.stop();
+</script>
+</body>
+</html>
