@@ -120,13 +120,7 @@ function startAsr(t) {
   rec.continuous = true;
   rec.interimResults = true;
   rec.processLocally = true;
-  // コンテキストバイアシング: ウォッチ語+国会用語を優先語彙として渡す(対応環境のみ)
-  if (window.SpeechRecognitionPhrase) {
-    try {
-      const terms = [...watchWords(), "委員長", "委員会", "質疑", "答弁", "参考人", "理事", "法案", "附帯決議"];
-      rec.phrases = terms.map((w) => new SpeechRecognitionPhrase(w, 5.0));
-    } catch (e) { console.warn("phrases未対応:", e); }
-  }
+  applyPhrases(rec); // コンテキストバイアシング(ウォッチ語を優先語彙に)
   const asrEl = t.el.querySelector(".asr");
   let errors = 0;
   let brightBase = 0; // この文字位置までは「古い」= グレー表示
@@ -232,6 +226,19 @@ function fuzzyIncludes(text, word) {
   }
   return false;
 }
+
+// コンテキストバイアシング: ウォッチ語+国会用語を優先語彙として認識エンジンに渡す(対応環境のみ)
+// ウォッチリスト編集時は稼働中の全認識セッションに即時再適用する
+function applyPhrases(rec) {
+  if (!window.SpeechRecognitionPhrase) return;
+  try {
+    const terms = [...new Set([...watchWords(), "委員長", "委員会", "質疑", "答弁", "参考人", "理事", "法案", "附帯決議"])];
+    rec.phrases = terms.map((w) => new SpeechRecognitionPhrase(w, 5.0));
+  } catch (e) { console.warn("phrases未対応:", e); }
+}
+watchInput.addEventListener("change", () => {
+  for (const t of tiles.values()) if (t.rec) applyPhrases(t.rec);
+});
 
 function detect(t, rawText) {
   const text = normalize(rawText);
