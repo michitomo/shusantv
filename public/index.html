@@ -50,9 +50,10 @@ function makeTile(s) {
   const video = el.querySelector("video");
   const hls = new Hls({ capLevelToPlayerSize: false, startLevel: 0, maxBufferLength: 15 });
   hls.on(Hls.Events.MANIFEST_PARSED, () => {
-    // 低負荷のため最低レートに固定。unmute時に解除する
+    // 低負荷のため自動レートの上限を最低レベルにキャップ。unmute時に解除する
+    // (currentLevel直接指定はバッファフラッシュでリバッファするためcappingを使う)
     const lowest = hls.levels.reduce((a, l, i) => (l.bitrate < hls.levels[a].bitrate ? i : a), 0);
-    hls.currentLevel = lowest;
+    hls.autoLevelCapping = lowest;
     video.play().catch(() => {});
   });
   let fails = 0;
@@ -78,7 +79,7 @@ function toggleMute(id) {
     t.video.muted = !on;
     t.el.classList.toggle("unmuted", on);
     t.el.querySelector(".muteicon").textContent = on ? "🔊" : "🔇";
-    t.hls.currentLevel = on ? -1 : 0; // unmute中だけ自動レート
+    t.hls.autoLevelCapping = on ? -1 : 0; // フォーカス中だけキャップ解除(セグメント境界で滑らかに昇格)
   }
   relayout();
 }
