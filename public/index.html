@@ -416,11 +416,20 @@ function relayout() {
     const others = n - 1;
     grid.style.justifyContent = "";
     grid.style.alignContent = "";
-    grid.style.gridTemplateColumns = "4fr 1fr";
-    grid.style.gridTemplateRows = `repeat(${others}, 1fr)`;
-    tiles.get(focusedId).el.style.gridArea = `1 / 1 / ${others + 1} / 2`;
-    let row = 1;
-    for (const [tid, t] of tiles) if (tid !== focusedId) t.el.style.gridArea = `${row++} / 2`;
+    if (H > W) {
+      // 縦長画面: フォーカスを上に大きく、残りは下に横並び
+      grid.style.gridTemplateColumns = `repeat(${others}, 1fr)`;
+      grid.style.gridTemplateRows = "4fr 1fr";
+      tiles.get(focusedId).el.style.gridArea = `1 / 1 / 2 / ${others + 1}`;
+      let col = 1;
+      for (const [tid, t] of tiles) if (tid !== focusedId) t.el.style.gridArea = `2 / ${col++}`;
+    } else {
+      grid.style.gridTemplateColumns = "4fr 1fr";
+      grid.style.gridTemplateRows = `repeat(${others}, 1fr)`;
+      tiles.get(focusedId).el.style.gridArea = `1 / 1 / ${others + 1} / 2`;
+      let row = 1;
+      for (const [tid, t] of tiles) if (tid !== focusedId) t.el.style.gridArea = `${row++} / 2`;
+    }
     return;
   }
   let best = { cols: 1, area: 0, w: 0, h: 0 };
