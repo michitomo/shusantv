@@ -24,8 +24,17 @@
   <button id="check">1. 機能チェック</button>
   <button id="install">2. 日本語パック install</button>
   <button id="start">3. 認識開始 (video音声)</button>
+  <button id="startServer">3b. 認識開始 (server許可)</button>
+  <button id="startWA">3c. 認識開始 (WebAudio経由)</button>
+  <button id="startMic">3d. マイクで認識(基準テスト)</button>
   <button id="stop">停止</button>
 </div>
+<div>
+  <button id="para">4. 並列負荷テスト</button>
+  本数: <input id="paraN" type="number" value="4" min="1" max="16" style="width:4em">
+  （開催中の中継を複数再生し全部オンデバイス認識）
+</div>
+<div id="paraOut"></div>
 <div id="diag"></div>
 <div id="result"></div>
 <script>
@@ -74,16 +83,46 @@ $("install").onclick = async () => {
 };
 
 let rec;
+let useLocal = true;
+let useWebAudio = false;
+$("startServer").onclick = () => { useLocal = false; $("start").onclick(); useLocal = true; };
+$("startWA").onclick = () => { useWebAudio = true; $("start").onclick(); useWebAudio = false; };
+let useMic = false;
+// マイク×サーバ認識 = 従来から確実に動く組み合わせ。これでベースラインを取る
+$("startMic").onclick = () => { useMic = true; useLocal = false; $("start").onclick(); useMic = false; useLocal = true; };
+const startMicLocal = document.createElement("button");
+startMicLocal.textContent = "3e. マイク×オンデバイス";
+startMicLocal.onclick = () => { useMic = true; $("start").onclick(); useMic = false; };
+$("startMic").after(startMicLocal);
+
+let actx, waDest;
+function webAudioTrack() {
+  // captureStream由来trackが拒否される場合の代替: MediaElementSource → MediaStreamDestination
+  if (!waDest) {
+    actx = new AudioContext();
+    const src = actx.createMediaElementSource($("v"));
+    waDest = actx.createMediaStreamDestination();
+    src.connect(waDest);
+    src.connect(actx.destination); // スピーカーにも出す
+  }
+  actx.resume();
+  return waDest.stream.getAudioTracks()[0];
+}
+
 $("start").onclick = () => {
   if (!SR) return diag("SpeechRecognition なし");
-  const stream = $("v").captureStream();
-  const track = stream.getAudioTracks()[0];
+  if ($("v").paused) diag("⚠ videoが停止中: 再生してから実行してください");
+  const track = useMic ? null : useWebAudio ? webAudioTrack() : $("v").captureStream().getAudioTracks()[0];
+  diag(`経路: ${useWebAudio ? "WebAudio" : "captureStream"}, readyState=${track?.readyState}, muted=${track?.muted}`);
   diag(`audioTrack: ${track ? track.label || "(無名)" : "なし"}`);
   rec = new SR();
   rec.lang = "ja-JP";
   rec.continuous = true;
   rec.interimResults = true;
-  try { rec.processLocally = true; } catch {}
+  try { rec.processLocally = useLocal; } catch (e) { diag(`processLocally代入エラー: ${e}`); }
+  diag(`processLocally=${rec.processLocally}, lang=${rec.lang}`);
+  if (typeof SR.available === "function")
+    SR.available({ langs: ["ja-JP"], processLocally: true }).then((a) => diag(`(再確認) available local: ${a}`));
   rec.onresult = (e) => {
     let final = "", interim = "";
     for (const r of e.results) (r.isFinal ? (final += r[0].transcript + "\n") : (interim += r[0].transcript));
@@ -92,17 +131,61 @@ $("start").onclick = () => {
   rec.onerror = (e) => diag(`onerror: ${e.error} ${e.message || ""}`);
   rec.onend = () => diag("onend (認識終了)");
   try {
-    if (track && rec.start.length >= 1) {
-      rec.start(track); // MediaStreamTrack 対応版
-      diag("rec.start(track) 呼び出し成功 → 認識中…");
-    } else {
-      rec.start(); // 旧API(マイクのみ)へのフォールバック
-      diag("⚠ track非対応: rec.start() (マイク入力)で開始");
-    }
-  } catch (e) { diag(`start エラー: ${e}`); }
+    if (track) { rec.start(track); diag("rec.start(track) 呼び出し成功 → 認識中…"); }
+    else { rec.start(); diag("rec.start() マイク入力で認識中…(何か話してください)"); }
+  } catch (e) {
+    diag(`start エラー: ${e}`);
+  }
 };
 
-$("stop").onclick = () => rec?.stop();
+$("stop").onclick = () => { rec?.stop(); paraStop(); };
+
+// ---- 並列負荷テスト: 開催中の中継N本(足りなければ同じ中継を複数)を全部認識 ----
+const paraSessions = [];
+function paraStop() {
+  for (const s of paraSessions) { s.rec.onend = null; s.rec.stop(); s.hls.destroy(); s.box.remove(); }
+  paraSessions.length = 0;
+}
+$("para").onclick = async () => {
+  paraStop();
+  const n = +$("paraN").value;
+  const { streams } = await (await fetch("streams.json")).json();
+  if (!streams.length) return diag("中継なし");
+  diag(`並列テスト開始: ${n}本 (アクティビティモニタでCPUを見てください)`);
+  for (let i = 0; i < n; i++) {
+    const s = streams[i % streams.length];
+    const box = document.createElement("div");
+    box.style.cssText = "border:1px solid #333;margin:4px 0;padding:4px;font-size:12px";
+    box.innerHTML = `<b>${i + 1}. ${s.name}</b> <span class="st">起動中…</span><div class="tx" style="color:#aaa"></div>`;
+    $("paraOut").appendChild(box);
+    const video = document.createElement("video");
+    video.crossOrigin = "anonymous"; video.autoplay = true; video.playsInline = true;
+    const hls = new Hls({ startLevel: 0 });
+    hls.loadSource(s.m3u8); hls.attachMedia(video);
+    // muted videoはcaptureStreamも無音になるChromeバグがあるため、WebAudioで
+    // 認識用(フル音声)とスピーカー用(gain 0)に分岐する。本番もこの構成
+    const ctx = new AudioContext();
+    const src = ctx.createMediaElementSource(video);
+    const dest = ctx.createMediaStreamDestination();
+    src.connect(dest);
+    const gain = ctx.createGain(); gain.gain.value = 0;
+    src.connect(gain).connect(ctx.destination);
+    const r = new SR();
+    r.lang = "ja-JP"; r.continuous = true; r.interimResults = true; r.processLocally = true;
+    r.onresult = (e) => {
+      const last = e.results[e.results.length - 1];
+      box.querySelector(".tx").textContent = last[0].transcript.slice(-80);
+      box.querySelector(".st").textContent = "認識中";
+    };
+    r.onerror = (e) => (box.querySelector(".st").textContent = `error: ${e.error}`);
+    r.onend = () => { try { r.start(dest.stream.getAudioTracks()[0]); } catch {} }; // 自動再開
+    hls.on(Hls.Events.MANIFEST_PARSED, () => {
+      video.play().then(() => ctx.resume()).catch(() => {});
+      try { r.start(dest.stream.getAudioTracks()[0]); } catch (e) { box.querySelector(".st").textContent = String(e); }
+    });
+    paraSessions.push({ rec: r, hls, box });
+  }
+};
 </script>
 </body>
 </html>
