@@ -30,9 +30,16 @@
   .quality { font-size: 10px; font-weight: 700; color: #7c5; border: 1px solid #7c5; border-radius: 3px;
     padding: 0 4px; flex-shrink: 0; }
   .quality:empty { display: none; }
-  .asr { position: absolute; left: 0; right: 0; bottom: 34px; padding: 2px 10px; font-size: 12px; color: #ddd;
-    background: rgba(0,0,0,.5); pointer-events: none; }
+  .tile { container-type: size; }
+  .asr { position: absolute; left: 4%; right: 4%; pointer-events: none; text-align: center; line-height: 1.25; }
   .asr:empty { display: none; }
+  /* スタイルA: TikTok風 — 大きめ縁取り文字を映像中央下に浮かせる */
+  .asr.capA { bottom: 22%; font-size: 7cqw; font-weight: 800; color: #fff;
+    text-shadow: 0 0 6px #000, 2px 2px 0 #000, -2px 2px 0 #000, 2px -2px 0 #000, -2px -2px 0 #000;
+    paint-order: stroke fill; -webkit-text-stroke: 1px #000; }
+  /* スタイルB: 放送テロップ風 — 黒帯ボックスで下部固定 */
+  .asr.capB { bottom: 13%; font-size: 5.5cqw; font-weight: 700; color: #ffd; left: 8%; right: 8%;
+    background: rgba(0,0,0,.72); border-radius: .5em; padding: .25em .6em; }
   .pending video { opacity: .35; }
   .empty { padding: 40px; color: #888; text-align: center; }
   #gate { position: fixed; inset: 0; background: rgba(0,0,0,.75); display: flex; align-items: center;
@@ -89,13 +96,16 @@ function initAudio(t) {
   gain.gain.value = 0;
   src.connect(gain).connect(actx.destination);
   t.audio = { src, gain };
-  if (t.stream.house === "shugiin" && SR) startAsr(t);
+  if (SR) startAsr(t); // 衆参とも同じASR字幕(参院公式字幕は検出用に裏で併用)
 }
 
 // ---- 衆議院: ブラウザ内蔵オンデバイス音声認識 ----
 // 注意: SODA(SpeechRecognition.install)導入直後はChrome完全再起動が必要。
 // 未ロードだと "network" エラーで即終了する(Chrome 149時点の誤報告, crbug 520350511)
+let asrCount = 0;
 function startAsr(t) {
+  // 字幕スタイル比較: 衆院タイルに交互にA(TikTok風)/B(テロップ風)を割り当て
+  t.el.querySelector(".asr").classList.add(asrCount++ % 2 === 0 ? "capA" : "capB");
   const dest = actx.createMediaStreamDestination();
   t.audio.src.connect(dest);
   const rec = new SR();
@@ -108,7 +118,7 @@ function startAsr(t) {
   rec.onresult = (e) => {
     const last = e.results[e.results.length - 1];
     const text = last[0].transcript;
-    asrEl.textContent = text.slice(-60);
+    asrEl.textContent = text.slice(-40); // 大型字幕は2行程度に収める
     detect(t, text);
     errors = 0;
   };
@@ -166,20 +176,15 @@ function makeTile(s) {
     </div>`;
   el.querySelector(".name").textContent = `${s.time} ${s.name}`;
   const video = el.querySelector("video");
-  const hls = new Hls({ capLevelToPlayerSize: false, startLevel: 0, maxBufferLength: 15, subtitleDisplay: true });
+  const hls = new Hls({ capLevelToPlayerSize: false, startLevel: 0, maxBufferLength: 15, subtitleDisplay: false });
   const t = { el, video, hls, stream: s, lowest: 0, highest: 0, audio: null, hitUntil: 0 };
 
   hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, () => {
-    if (hls.subtitleTracks.length) hls.subtitleTrack = 0; // 参議院のライブ字幕
+    if (hls.subtitleTracks.length) hls.subtitleTrack = 0; // 参議院の公式字幕(非表示・検出専用)
   });
-  // 字幕cue: 位置をラベルと重ならないよう持ち上げ + 検出に流用
   video.textTracks.addEventListener("addtrack", (e) => {
     e.track.addEventListener("cuechange", function () {
-      for (const cue of this.activeCues || []) {
-        cue.snapToLines = true;
-        cue.line = -4;
-        detect(t, cue.text);
-      }
+      for (const cue of this.activeCues || []) detect(t, cue.text);
     });
   });
   hls.on(Hls.Events.MANIFEST_PARSED, () => {
