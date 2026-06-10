@@ -63,9 +63,21 @@ const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 // video自体は常にunmuteし、WebAudioで「認識用(フル音声)」と「スピーカー(GainNode)」に分岐する。
 // AudioContextはユーザー操作後でないと動かないので初回クリックのゲートを置く。
 let actx = null;
-document.getElementById("gate").addEventListener("click", function () {
+document.getElementById("gate").addEventListener("click", async function () {
   actx = new AudioContext();
   this.remove();
+  // オンデバイス認識のja-JP利用権はオリジン単位。未取得ならこのオリジン用にinstallしてから始める
+  if (SR?.available) {
+    try {
+      let a = await SR.available({ langs: ["ja-JP"], processLocally: true });
+      if (a === "downloadable") {
+        statusEl.textContent = "音声認識の日本語パックを準備中…";
+        await SR.install({ langs: ["ja-JP"], processLocally: true });
+        a = await SR.available({ langs: ["ja-JP"], processLocally: true });
+      }
+      if (a !== "available") statusEl.textContent = `⚠ オンデバイス音声認識が使えません (${a})`;
+    } catch (e) { statusEl.textContent = `⚠ ASR初期化: ${e}`; }
+  }
   for (const t of tiles.values()) initAudio(t);
 });
 
