@@ -13,10 +13,10 @@
   #grid { display: grid; gap: 6px; padding: 0 6px 6px; height: calc(100vh - 44px); box-sizing: border-box; }
   .tile { position: relative; background: #000; border: 2px solid #333; border-radius: 6px; overflow: hidden; cursor: pointer; min-height: 0; min-width: 0; }
   .tile.unmuted { border-color: #e5b545; }
-  .tile video { width: 100%; height: 100%; display: block; background: #000; object-fit: contain; }
-  .tile .label { position: absolute; left: 0; right: 0; bottom: 0; padding: 4px 8px; font-size: 12px;
-    background: linear-gradient(transparent, rgba(0,0,0,.85)); display: flex; gap: 6px; align-items: center; }
-  .badge { font-size: 10px; padding: 1px 5px; border-radius: 3px; flex-shrink: 0; }
+  .tile video { width: 100%; height: 100%; display: block; background: #000; object-fit: cover; }
+  .tile .label { position: absolute; left: 0; right: 0; bottom: 0; padding: 6px 10px; font-size: 16px; font-weight: 600;
+    background: linear-gradient(transparent, rgba(0,0,0,.85)); display: flex; gap: 8px; align-items: center; }
+  .badge { font-size: 13px; padding: 1px 7px; border-radius: 3px; flex-shrink: 0; }
   .badge.shugiin { background: #2d5a88; }
   .badge.sangiin { background: #7a3d5a; }
   .muteicon { margin-left: auto; opacity: .7; }
@@ -28,7 +28,7 @@
 <header>
   <h1>shusantv</h1>
   <span class="status" id="status">読み込み中…</span>
-  <span class="status">クリックで音声ON/OFF（音声は同時に1つ）</span>
+  <span class="status">クリックで拡大+音声ON / 再クリックかEscで平等グリッドに戻る</span>
 </header>
 <div id="grid"></div>
 <script>
@@ -69,15 +69,20 @@ function makeTile(s) {
   tiles.set(s.id, { el, video, hls, stream: s });
 }
 
+// クリック: そのタイルをフォーカス(拡大+unmute)。フォーカス中のタイルを再クリックで平等グリッドに戻る
+let focusedId = null;
 function toggleMute(id) {
+  focusedId = focusedId === id ? null : id;
   for (const [tid, t] of tiles) {
-    const on = tid === id && t.video.muted;
+    const on = tid === focusedId;
     t.video.muted = !on;
     t.el.classList.toggle("unmuted", on);
     t.el.querySelector(".muteicon").textContent = on ? "🔊" : "🔇";
     t.hls.currentLevel = on ? -1 : 0; // unmute中だけ自動レート
   }
+  relayout();
 }
+window.addEventListener("keydown", (e) => { if (e.key === "Escape" && focusedId) toggleMute(focusedId); });
 
 // 衆議院は m3u8 が CORS 開放されているため、ブラウザから全 room を直接プローブできる。
 // streams.json (Actions の cron) が遅延していても、開始直後の中継を映像だけ先に拾う。
@@ -118,20 +123,37 @@ async function refresh() {
     statusEl.textContent = "一覧取得エラー: " + e;
   }
 }
-// タイル数とビューポートから 16:9 のタイル面積が最大になる列数を選び、画面全体を埋める
+// 画面全体を敷き詰めるレイアウト。映像はクロップ(cover)前提でセルのアスペクト比は 4:3〜16:9 を許容し、
+// その範囲に収まる有効面積が最大になる列数を選ぶ
 function relayout() {
   const n = tiles.size;
   if (!n) return;
   const W = grid.clientWidth, H = grid.clientHeight, GAP = 6;
+  for (const t of tiles.values()) t.el.style.gridArea = "";
+
+  // フォーカスモード: 左に大画面、右に残りを縦に並べる
+  if (focusedId && tiles.has(focusedId) && n > 1) {
+    const others = n - 1;
+    grid.style.gridTemplateColumns = "4fr 1fr";
+    grid.style.gridTemplateRows = `repeat(${others}, 1fr)`;
+    tiles.get(focusedId).el.style.gridArea = `1 / 1 / ${others + 1} / 2`;
+    let row = 1;
+    for (const [tid, t] of tiles) if (tid !== focusedId) t.el.style.gridArea = `${row++} / 2`;
+    return;
+  }
+
   let best = { cols: 1, area: 0 };
   for (let cols = 1; cols <= n; cols++) {
     const rows = Math.ceil(n / cols);
-    const w = (W - GAP * (cols - 1)) / cols;
-    const h = (H - GAP * (rows - 1)) / rows;
-    const tw = Math.min(w, h * 16 / 9);
-    if (tw * (tw * 9 / 16) > best.area) best = { cols, area: tw * (tw * 9 / 16) };
+    let w = (W - GAP * (cols - 1)) / cols;
+    let h = (H - GAP * (rows - 1)) / rows;
+    const aspect = w / h;
+    if (aspect > 16 / 9) w = h * 16 / 9;       // 横長すぎ: 幅が余る
+    else if (aspect < 4 / 3) h = w * 3 / 4;    // 縦長すぎ: クロップ限界超え
+    if (w * h > best.area) best = { cols, area: w * h };
   }
   grid.style.gridTemplateColumns = `repeat(${best.cols}, 1fr)`;
+  grid.style.gridTemplateRows = "";
   grid.style.gridAutoRows = "1fr";
 }
 window.addEventListener("resize", relayout);
