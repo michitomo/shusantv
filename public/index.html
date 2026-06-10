@@ -385,7 +385,14 @@ async function refresh() {
     streams.push(...(await probeShugiin(knownRooms)));
     const ids = new Set(streams.map((s) => s.id));
     for (const id of tiles.keys()) if (!ids.has(id)) removeTile(id);
-    for (const s of streams) if (!tiles.has(s.id)) makeTile(s);
+    for (const s of streams) {
+      const t = tiles.get(s.id);
+      if (!t) { makeTile(s); continue; }
+      // 既存タイルの表示情報を更新(プローブ仮名→正式名、開会待ち解除など)
+      t.stream = s;
+      t.el.querySelector(".name").textContent = `${s.time ?? ""} ${s.name}`.trim();
+      t.el.classList.toggle("pending", !!s.pending);
+    }
     relayout();
     statusEl.textContent =
       `${streams.length}件中継中 (衆${streams.filter(s=>s.house==="shugiin").length}/参${streams.filter(s=>s.house==="sangiin").length})` +
