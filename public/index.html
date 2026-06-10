@@ -86,7 +86,7 @@ function toggleMute(id) {
     t.video.muted = !on;
     t.el.classList.toggle("unmuted", on);
     t.el.querySelector(".muteicon").textContent = on ? "🔊" : "🔇";
-    t.hls.nextLevel = on ? t.highest : t.lowest; // フォーカス中だけ最高レート
+    t.hls.nextLevel = on || allHigh ? t.highest : t.lowest;
   }
   relayout();
 }
@@ -165,6 +165,26 @@ function relayout() {
   grid.style.gridAutoRows = "1fr";
 }
 window.addEventListener("resize", relayout);
+
+// 回線に十分な余裕があれば全タイルを高レートにする(ヒステリシス付きで行ったり来たりを防ぐ)
+let allHigh = false;
+function adjustQuality() {
+  if (!tiles.size) return;
+  let need = 0, est = 0;
+  for (const t of tiles.values()) {
+    const lv = t.hls.levels;
+    if (!lv?.length) return; // まだマニフェスト未取得のタイルがあれば見送り
+    need += lv[t.highest].bitrate;
+    est = Math.max(est, t.hls.bandwidthEstimate || 0);
+  }
+  const wasHigh = allHigh;
+  if (!allHigh && est > need * 2.0) allHigh = true;   // 2倍の余裕で昇格
+  else if (allHigh && est < need * 1.3) allHigh = false; // 1.3倍を切ったら降格
+  if (allHigh === wasHigh) return;
+  for (const [tid, t] of tiles)
+    t.hls.nextLevel = allHigh || tid === focusedId ? t.highest : t.lowest;
+}
+setInterval(adjustQuality, 15_000);
 
 refresh();
 setInterval(refresh, 60_000);
