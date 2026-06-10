@@ -41,6 +41,11 @@
     /* 高さは内容に応じて伸び、2行分を上限に古い行から隠れる(下端=最新を常に表示) */
     max-height: calc(1.35em * 3 + .6em - 4px); overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; }
   .asr .bubble .old { color: #b9b9ae; }
+  /* フォーカスモード中のサブ画面: 字幕を大きく・5行まで */
+  #grid.focusmode .tile:not(.unmuted) .bubble {
+    font-size: 4cqw;
+    max-height: calc(1.35em * 5 + .6em - 4px);
+  }
   .pending video { opacity: .35; }
   .empty { padding: 40px; color: #888; text-align: center; }
   #gate { position: fixed; inset: 0; background: rgba(0,0,0,.75); display: flex; align-items: center;
@@ -125,49 +130,40 @@ function startAsr(t) {
   }
   const asrEl = t.el.querySelector(".asr");
   let errors = 0;
-  // 確定済みテキスト長を覚えておき、末尾だけを文節分割し直す(確定済みの行は動かない)
-  let committedLen = 0;
-  let lines = [];
-  let cur = "";       // 認識途中の最終行
-  let fullLen = 0;
   let brightBase = 0; // この文字位置までは「古い」= グレー表示
   let marks = [];     // [文字位置, 時刻] 新しい文字の出現記録(時間フェード用)
   const FADE = 500, TS = "\u2009";
 
-  // 直近FADE ms以内に出た文字だけ明色、それ以前はグレー
+  // 直近FADE ms以内に出た文字だけ明色、それ以前はグレー。改行なし(自然折り返しのみ)
+  let lastFull = "";
   function render() {
     const now = performance.now();
     for (const [len, tm] of marks) if (now - tm > FADE) brightBase = Math.max(brightBase, len);
     marks = marks.filter(([, tm]) => now - tm <= FADE);
-    const view = [...lines, cur].filter(Boolean).slice(-6);
+    const text = lastFull.slice(-150); // 表示は末尾のみ(3行高でクリップされる)
     asrEl.innerHTML = "";
-    if (!view.length) return;
+    if (!text) return;
     const b = document.createElement("div");
     b.className = "bubble";
-    const inner = document.createElement("div"); // flex(下端寄せ)の単一子要素として通常フローで組む
-    let cursor = fullLen - view.join("").length;
-    view.forEach((l, i) => {
-      const phrases = window.budouxParser ? window.budouxParser.parse(l) : [l];
-      const oldParts = [], newParts = [];
-      let pos = cursor;
-      for (const ph of phrases) {
-        (pos + ph.length <= brightBase ? oldParts : newParts).push(ph);
-        pos += ph.length;
-      }
-      if (oldParts.length) {
-        const sp = document.createElement("span");
-        sp.className = "old";
-        sp.textContent = oldParts.join(TS) + (newParts.length ? TS : "");
-        inner.appendChild(sp);
-      }
-      if (newParts.length) {
-        const sp = document.createElement("span");
-        sp.textContent = newParts.join(TS);
-        inner.appendChild(sp);
-      }
-      cursor += l.length;
-      if (i < view.length - 1) inner.appendChild(document.createTextNode("\n"));
-    });
+    const inner = document.createElement("div"); // flex(下端寄せ)の単一子要素
+    const phrases = window.budouxParser ? window.budouxParser.parse(text) : [text];
+    const oldParts = [], newParts = [];
+    let pos = lastFull.length - text.length;
+    for (const ph of phrases) {
+      (pos + ph.length <= brightBase ? oldParts : newParts).push(ph);
+      pos += ph.length;
+    }
+    if (oldParts.length) {
+      const sp = document.createElement("span");
+      sp.className = "old";
+      sp.textContent = oldParts.join(TS) + (newParts.length ? TS : "");
+      inner.appendChild(sp);
+    }
+    if (newParts.length) {
+      const sp = document.createElement("span");
+      sp.textContent = newParts.join(TS);
+      inner.appendChild(sp);
+    }
     b.appendChild(inner);
     asrEl.appendChild(b);
   }
@@ -178,23 +174,11 @@ function startAsr(t) {
     : /(です|ます|でした|ました|ません|ございます|であります)(ね|よ)?$/.test(s) ? s + "。"
     : s + "、";
   rec.onresult = (e) => {
-    let full = "", finalLen = 0;
-    for (const r of e.results) {
-      full += r.isFinal ? punct(r[0].transcript) : r[0].transcript;
-      if (r.isFinal) finalLen = full.length;
-    }
-    if (full.length < committedLen) { committedLen = 0; lines = []; cur = ""; brightBase = 0; marks = []; fullLen = 0; }
-    // 改行は発話の切れ目(エンジンがポーズで確定したisFinal境界)のみ。
-    // 長い発話はバブル内の自然折り返し(文節の極細スペース位置)に任せる
-    cur = full.slice(committedLen);
-    if (cur && committedLen + cur.length <= finalLen) {
-      lines.push(cur);
-      committedLen += cur.length;
-      cur = "";
-    }
-    if (lines.length > 8) lines = lines.slice(-4); // 古い行は破棄
-    if (full.length > fullLen) marks.push([fullLen, performance.now()]); // fullLen〜full.lengthが新出
-    fullLen = full.length;
+    let full = "";
+    for (const r of e.results) full += r.isFinal ? punct(r[0].transcript) : r[0].transcript;
+    if (full.length < lastFull.length) { brightBase = 0; marks = []; } // セッション再開でリセット
+    if (full.length > lastFull.length) marks.push([lastFull.length, performance.now()]);
+    lastFull = full;
     render();
     detect(t, full.slice(-100));
     errors = 0;
@@ -312,6 +296,7 @@ window.addEventListener("keydown", (e) => {
 });
 
 function applyFocus() {
+  grid.classList.toggle("focusmode", !!focusedId);
   for (const [tid, t] of tiles) {
     const on = tid === focusedId;
     if (t.audio) t.audio.gain.gain.value = on ? 1 : 0;
