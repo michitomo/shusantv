@@ -7,15 +7,20 @@
 <style>
   :root { color-scheme: dark; }
   body { margin: 0; background: #111; color: #eee; font-family: system-ui, sans-serif; }
-  header { display: flex; align-items: baseline; gap: 12px; padding: 8px 14px; }
+  header { display: flex; align-items: baseline; gap: 12px; padding: 6px 14px; flex-wrap: wrap; }
   header h1 { font-size: 16px; margin: 0; }
   header .status { color: #999; font-size: 12px; }
   header .credit { margin-left: auto; }
   header .credit a { color: #8ab; }
+  #watch { width: 280px; background: #222; border: 1px solid #444; color: #eee; border-radius: 4px;
+    padding: 2px 6px; font-size: 12px; }
+  label.auto { font-size: 12px; color: #bbb; user-select: none; }
   #grid { display: grid; gap: 6px; padding: 0 6px 6px; height: calc(100vh - 44px); box-sizing: border-box; }
   .tile { position: relative; background: #000; border: 2px solid #333; border-radius: 6px; overflow: hidden; cursor: pointer; min-height: 0; min-width: 0; }
   .tile.unmuted { border-color: #e5b545; }
+  .tile.hit { border-color: #e54545; box-shadow: 0 0 12px #e5454588; }
   .tile video { width: 100%; height: 100%; display: block; background: #000; object-fit: cover; }
+  .tile video::cue { background: rgba(0,0,0,.6); font-size: 14px; }
   .tile .label { position: absolute; left: 0; right: 0; bottom: 0; padding: 6px 10px; font-size: 16px; font-weight: 600;
     background: linear-gradient(transparent, rgba(0,0,0,.85)); display: flex; gap: 8px; align-items: center; }
   .badge { font-size: 13px; padding: 1px 7px; border-radius: 3px; flex-shrink: 0; }
@@ -25,32 +30,109 @@
   .quality { font-size: 10px; font-weight: 700; color: #7c5; border: 1px solid #7c5; border-radius: 3px;
     padding: 0 4px; flex-shrink: 0; }
   .quality:empty { display: none; }
-  .tile video::cue { background: rgba(0,0,0,.6); font-size: 14px; }
+  .asr { position: absolute; left: 0; right: 0; bottom: 34px; padding: 2px 10px; font-size: 12px; color: #ddd;
+    background: rgba(0,0,0,.5); pointer-events: none; }
+  .asr:empty { display: none; }
   .pending video { opacity: .35; }
   .empty { padding: 40px; color: #888; text-align: center; }
+  #gate { position: fixed; inset: 0; background: rgba(0,0,0,.75); display: flex; align-items: center;
+    justify-content: center; font-size: 20px; cursor: pointer; z-index: 10; }
 </style>
 </head>
 <body>
 <header>
   <h1>shusantv</h1>
   <span class="status" id="status">読み込み中…</span>
-  <span class="status">クリックで拡大+音声ON / 再クリックかEscで平等グリッドに戻る</span>
+  <input id="watch" placeholder="ウォッチ: 議員名,会派をカンマ区切り">
+  <label class="auto"><input type="checkbox" id="autoFocus" checked> ヒットで自動フォーカス</label>
   <span class="status credit">映像:
     <a href="https://www.shugiintv.go.jp/jp/" target="_blank" rel="noopener">衆議院インターネット審議中継</a> /
     <a href="https://www.webtv.sangiin.go.jp/webtv/" target="_blank" rel="noopener">参議院インターネット審議中継</a>
     （著作権は各議院に帰属。本サイトは非公式の個人用ビューアです）</span>
 </header>
 <div id="grid"></div>
+<div id="gate">クリックで開始（音声・発言認識の有効化）</div>
 <script>
 const grid = document.getElementById("grid");
 const statusEl = document.getElementById("status");
-const tiles = new Map(); // id -> {el, video, hls}
+const tiles = new Map();
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 
+// ---- 音声基盤 ----
+// Chromeでは muted な video の音声キャプチャが無音になる既知バグがあるため、
+// video自体は常にunmuteし、WebAudioで「認識用(フル音声)」と「スピーカー(GainNode)」に分岐する。
+// AudioContextはユーザー操作後でないと動かないので初回クリックのゲートを置く。
+let actx = null;
+document.getElementById("gate").addEventListener("click", function () {
+  actx = new AudioContext();
+  this.remove();
+  for (const t of tiles.values()) initAudio(t);
+});
+
+function initAudio(t) {
+  if (!actx || t.audio) return;
+  t.video.muted = false;
+  const src = actx.createMediaElementSource(t.video);
+  const gain = actx.createGain();
+  gain.gain.value = 0;
+  src.connect(gain).connect(actx.destination);
+  t.audio = { src, gain };
+  if (t.stream.house === "shugiin" && SR) startAsr(t);
+}
+
+// ---- 衆議院: ブラウザ内蔵オンデバイス音声認識 ----
+// 注意: SODA(SpeechRecognition.install)導入直後はChrome完全再起動が必要。
+// 未ロードだと "network" エラーで即終了する(Chrome 149時点の誤報告, crbug 520350511)
+function startAsr(t) {
+  const dest = actx.createMediaStreamDestination();
+  t.audio.src.connect(dest);
+  const rec = new SR();
+  rec.lang = "ja-JP";
+  rec.continuous = true;
+  rec.interimResults = true;
+  rec.processLocally = true;
+  let errors = 0;
+  rec.onresult = (e) => {
+    const last = e.results[e.results.length - 1];
+    const text = last[0].transcript;
+    t.el.querySelector(".asr").textContent = text.slice(-60);
+    detect(t, text);
+    errors = 0;
+  };
+  rec.onerror = (e) => { if (++errors > 5) rec.onend = null; };
+  rec.onend = () => setTimeout(() => { try { rec.start(dest.stream.getAudioTracks()[0]); } catch {} }, 1000);
+  try { rec.start(dest.stream.getAudioTracks()[0]); } catch {}
+  t.rec = rec;
+}
+
+// ---- ウォッチリスト検出 (衆: ASRテキスト / 参: 公式字幕cue) ----
+const watchInput = document.getElementById("watch");
+watchInput.value = localStorage.getItem("watchlist") || "";
+watchInput.addEventListener("change", () => localStorage.setItem("watchlist", watchInput.value));
+const watchWords = () => watchInput.value.split(/[,、，\s]+/).map((w) => w.trim()).filter(Boolean);
+
+function detect(t, text) {
+  const hit = watchWords().find((w) => text.includes(w));
+  if (!hit) return;
+  t.hitUntil = Date.now() + 90_000; // ヒット表示は90秒持続(発言が続く想定)
+  t.el.classList.add("hit");
+  if (document.getElementById("autoFocus").checked && !manualFocus && focusedId !== t.stream.id) {
+    focusedId = t.stream.id;
+    applyFocus();
+  }
+}
+setInterval(() => {
+  for (const t of tiles.values())
+    if (t.hitUntil && Date.now() > t.hitUntil) { t.hitUntil = 0; t.el.classList.remove("hit"); }
+}, 5000);
+
+// ---- タイル ----
 function makeTile(s) {
   const el = document.createElement("div");
   el.className = "tile" + (s.pending ? " pending" : "");
   el.innerHTML = `
     <video muted autoplay playsinline crossorigin="anonymous"></video>
+    <div class="asr"></div>
     <div class="label">
       <span class="badge ${s.house}">${s.house === "shugiin" ? "衆" : "参"}</span>
       <span class="name"></span>
@@ -60,60 +142,133 @@ function makeTile(s) {
   el.querySelector(".name").textContent = `${s.time} ${s.name}`;
   const video = el.querySelector("video");
   const hls = new Hls({ capLevelToPlayerSize: false, startLevel: 0, maxBufferLength: 15, subtitleDisplay: true });
-  // 参議院は配信にWebVTT字幕トラックがある(衆議院にはない)。あれば有効化
+  const t = { el, video, hls, stream: s, lowest: 0, highest: 0, audio: null, hitUntil: 0 };
+
   hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, () => {
-    if (hls.subtitleTracks.length) hls.subtitleTrack = 0;
+    if (hls.subtitleTracks.length) hls.subtitleTrack = 0; // 参議院のライブ字幕
   });
-  // 字幕を下端から数行持ち上げ、会議名ラベルと重ならないようにする
+  // 字幕cue: 位置をラベルと重ならないよう持ち上げ + 検出に流用
   video.textTracks.addEventListener("addtrack", (e) => {
     e.track.addEventListener("cuechange", function () {
-      for (const cue of this.activeCues || []) { cue.snapToLines = true; cue.line = -4; }
+      for (const cue of this.activeCues || []) {
+        cue.snapToLines = true;
+        cue.line = -4;
+        detect(t, cue.text);
+      }
     });
   });
-  const t = { el, video, hls, stream: s, lowest: 0, highest: 0 };
   hls.on(Hls.Events.MANIFEST_PARSED, () => {
-    // ABRに任せず明示切替(2段しかないため)。nextLevelはバッファをフラッシュしないので滑らか
     t.lowest = hls.levels.reduce((a, l, i) => (l.bitrate < hls.levels[a].bitrate ? i : a), 0);
     t.highest = hls.levels.reduce((a, l, i) => (l.bitrate > hls.levels[a].bitrate ? i : a), 0);
     hls.nextLevel = t.lowest;
     video.play().catch(() => {});
   });
   hls.on(Hls.Events.LEVEL_SWITCHED, (_, d) => {
-    // 上位レート再生中のみ HD バッジを表示
-    el.querySelector(".quality").textContent =
-      d.level === t.highest && t.highest !== t.lowest ? "HD" : "";
+    el.querySelector(".quality").textContent = d.level === t.highest && t.highest !== t.lowest ? "HD" : "";
   });
   let fails = 0;
   hls.on(Hls.Events.ERROR, (_, data) => {
     if (!data.fatal) return;
-    // streams.json が古く中継終了済みの場合はタイルを畳む
-    if (++fails > 3) { hls.destroy(); el.remove(); tiles.delete(s.id); relayout(); return; }
+    if (++fails > 3) { removeTile(s.id); return; } // 中継終了済みのタイルは畳む
     setTimeout(() => hls.loadSource(s.m3u8), 5000);
   });
   hls.loadSource(s.m3u8);
   hls.attachMedia(video);
-  el.addEventListener("click", () => toggleMute(s.id));
+  el.addEventListener("click", () => clickTile(s.id));
   grid.appendChild(el);
   tiles.set(s.id, t);
+  initAudio(t);
 }
 
-// クリック: そのタイルをフォーカス(拡大+unmute)。フォーカス中のタイルを再クリックで平等グリッドに戻る
+function removeTile(id) {
+  const t = tiles.get(id);
+  if (!t) return;
+  if (t.rec) { t.rec.onend = null; t.rec.stop(); }
+  t.hls.destroy();
+  t.el.remove();
+  tiles.delete(id);
+  if (focusedId === id) { focusedId = null; manualFocus = false; }
+  relayout();
+}
+
+// ---- フォーカス/音声 ----
 let focusedId = null;
-function toggleMute(id) {
-  focusedId = focusedId === id ? null : id;
+let manualFocus = false; // ユーザーが手動選択中は自動フォーカスを抑止
+function clickTile(id) {
+  if (focusedId === id) { focusedId = null; manualFocus = false; }
+  else { focusedId = id; manualFocus = true; }
+  applyFocus();
+}
+window.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && focusedId) { focusedId = null; manualFocus = false; applyFocus(); }
+});
+
+function applyFocus() {
   for (const [tid, t] of tiles) {
     const on = tid === focusedId;
-    t.video.muted = !on;
+    if (t.audio) t.audio.gain.gain.value = on ? 1 : 0;
+    else t.video.muted = !on; // ゲート前のフォールバック
     t.el.classList.toggle("unmuted", on);
     t.el.querySelector(".muteicon").textContent = on ? "🔊" : "🔇";
     t.hls.nextLevel = on || allHigh ? t.highest : t.lowest;
   }
   relayout();
 }
-window.addEventListener("keydown", (e) => { if (e.key === "Escape" && focusedId) toggleMute(focusedId); });
 
-// 衆議院は m3u8 が CORS 開放されているため、ブラウザから全 room を直接プローブできる。
-// streams.json (Actions の cron) が遅延していても、開始直後の中継を映像だけ先に拾う。
+// ---- 帯域に余裕があれば全タイル高レート ----
+let allHigh = false;
+function adjustQuality() {
+  if (!tiles.size) return;
+  let need = 0, est = 0;
+  for (const t of tiles.values()) {
+    const lv = t.hls.levels;
+    if (!lv?.length) return;
+    need += lv[t.highest].bitrate;
+    est = Math.max(est, t.hls.bandwidthEstimate || 0);
+  }
+  const wasHigh = allHigh;
+  if (!allHigh && est > need * 2.0) allHigh = true;
+  else if (allHigh && est < need * 1.3) allHigh = false;
+  if (allHigh === wasHigh) return;
+  for (const [tid, t] of tiles)
+    t.hls.nextLevel = allHigh || tid === focusedId ? t.highest : t.lowest;
+}
+setInterval(adjustQuality, 15_000);
+
+// ---- レイアウト: 画面全体に敷き詰め (クロップ前提でセル比4:3〜16:9を許容) ----
+function relayout() {
+  const n = tiles.size;
+  if (!n) return;
+  const W = grid.clientWidth, H = grid.clientHeight, GAP = 6;
+  for (const t of tiles.values()) t.el.style.gridArea = "";
+  if (focusedId && tiles.has(focusedId) && n > 1) {
+    const others = n - 1;
+    grid.style.gridTemplateColumns = "4fr 1fr";
+    grid.style.gridTemplateRows = `repeat(${others}, 1fr)`;
+    tiles.get(focusedId).el.style.gridArea = `1 / 1 / ${others + 1} / 2`;
+    let row = 1;
+    for (const [tid, t] of tiles) if (tid !== focusedId) t.el.style.gridArea = `${row++} / 2`;
+    return;
+  }
+  let best = { cols: 1, area: 0 };
+  for (let cols = 1; cols <= n; cols++) {
+    const rows = Math.ceil(n / cols);
+    let w = (W - GAP * (cols - 1)) / cols;
+    let h = (H - GAP * (rows - 1)) / rows;
+    const aspect = w / h;
+    if (aspect > 16 / 9) w = h * 16 / 9;
+    else if (aspect < 4 / 3) h = w * 3 / 4;
+    if (w * h > best.area) best = { cols, area: w * h };
+  }
+  grid.style.gridTemplateColumns = `repeat(${best.cols}, 1fr)`;
+  grid.style.gridTemplateRows = "";
+  grid.style.gridAutoRows = "1fr";
+}
+window.addEventListener("resize", relayout);
+
+// ---- 一覧取得 ----
+// 衆議院は m3u8 が CORS 開放されているためブラウザから全 room を直接プローブできる。
+// streams.json (Actions cron) が遅延していても開始直後の中継を拾う
 const SHU_ROOMS = Array.from({ length: 18 }, (_, i) => `room${String(i + 1).padStart(2, "0")}`);
 async function probeShugiin(known) {
   const found = [];
@@ -136,9 +291,7 @@ async function refresh() {
     const knownRooms = new Set(streams.map((s) => s.id));
     streams.push(...(await probeShugiin(knownRooms)));
     const ids = new Set(streams.map((s) => s.id));
-    for (const [id, t] of tiles) {
-      if (!ids.has(id)) { t.hls.destroy(); t.el.remove(); tiles.delete(id); }
-    }
+    for (const id of tiles.keys()) if (!ids.has(id)) removeTile(id);
     for (const s of streams) if (!tiles.has(s.id)) makeTile(s);
     relayout();
     statusEl.textContent =
@@ -151,61 +304,6 @@ async function refresh() {
     statusEl.textContent = "一覧取得エラー: " + e;
   }
 }
-// 画面全体を敷き詰めるレイアウト。映像はクロップ(cover)前提でセルのアスペクト比は 4:3〜16:9 を許容し、
-// その範囲に収まる有効面積が最大になる列数を選ぶ
-function relayout() {
-  const n = tiles.size;
-  if (!n) return;
-  const W = grid.clientWidth, H = grid.clientHeight, GAP = 6;
-  for (const t of tiles.values()) t.el.style.gridArea = "";
-
-  // フォーカスモード: 左に大画面、右に残りを縦に並べる
-  if (focusedId && tiles.has(focusedId) && n > 1) {
-    const others = n - 1;
-    grid.style.gridTemplateColumns = "4fr 1fr";
-    grid.style.gridTemplateRows = `repeat(${others}, 1fr)`;
-    tiles.get(focusedId).el.style.gridArea = `1 / 1 / ${others + 1} / 2`;
-    let row = 1;
-    for (const [tid, t] of tiles) if (tid !== focusedId) t.el.style.gridArea = `${row++} / 2`;
-    return;
-  }
-
-  let best = { cols: 1, area: 0 };
-  for (let cols = 1; cols <= n; cols++) {
-    const rows = Math.ceil(n / cols);
-    let w = (W - GAP * (cols - 1)) / cols;
-    let h = (H - GAP * (rows - 1)) / rows;
-    const aspect = w / h;
-    if (aspect > 16 / 9) w = h * 16 / 9;       // 横長すぎ: 幅が余る
-    else if (aspect < 4 / 3) h = w * 3 / 4;    // 縦長すぎ: クロップ限界超え
-    if (w * h > best.area) best = { cols, area: w * h };
-  }
-  grid.style.gridTemplateColumns = `repeat(${best.cols}, 1fr)`;
-  grid.style.gridTemplateRows = "";
-  grid.style.gridAutoRows = "1fr";
-}
-window.addEventListener("resize", relayout);
-
-// 回線に十分な余裕があれば全タイルを高レートにする(ヒステリシス付きで行ったり来たりを防ぐ)
-let allHigh = false;
-function adjustQuality() {
-  if (!tiles.size) return;
-  let need = 0, est = 0;
-  for (const t of tiles.values()) {
-    const lv = t.hls.levels;
-    if (!lv?.length) return; // まだマニフェスト未取得のタイルがあれば見送り
-    need += lv[t.highest].bitrate;
-    est = Math.max(est, t.hls.bandwidthEstimate || 0);
-  }
-  const wasHigh = allHigh;
-  if (!allHigh && est > need * 2.0) allHigh = true;   // 2倍の余裕で昇格
-  else if (allHigh && est < need * 1.3) allHigh = false; // 1.3倍を切ったら降格
-  if (allHigh === wasHigh) return;
-  for (const [tid, t] of tiles)
-    t.hls.nextLevel = allHigh || tid === focusedId ? t.highest : t.lowest;
-}
-setInterval(adjustQuality, 15_000);
-
 refresh();
 setInterval(refresh, 60_000);
 </script>
