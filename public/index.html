@@ -22,7 +22,9 @@
   .badge.shugiin { background: #2d5a88; }
   .badge.sangiin { background: #7a3d5a; }
   .muteicon { margin-left: auto; opacity: .7; }
-  .quality { font-size: 11px; font-weight: 400; color: #999; flex-shrink: 0; }
+  .quality { font-size: 10px; font-weight: 700; color: #7c5; border: 1px solid #7c5; border-radius: 3px;
+    padding: 0 4px; flex-shrink: 0; }
+  .quality:empty { display: none; }
   .tile video::cue { background: rgba(0,0,0,.6); font-size: 14px; }
   .pending video { opacity: .35; }
   .empty { padding: 40px; color: #888; text-align: center; }
@@ -71,9 +73,9 @@ function makeTile(s) {
     video.play().catch(() => {});
   });
   hls.on(Hls.Events.LEVEL_SWITCHED, (_, d) => {
-    const lv = hls.levels[d.level];
-    el.querySelector(".quality").textContent = `${lv.height}p ${Math.round(lv.bitrate / 1000)}k`;
-    el.querySelector(".quality").style.color = d.level === t.highest && t.highest !== t.lowest ? "#7c5" : "#999";
+    // 上位レート再生中のみ HD バッジを表示
+    el.querySelector(".quality").textContent =
+      d.level === t.highest && t.highest !== t.lowest ? "HD" : "";
   });
   let fails = 0;
   hls.on(Hls.Events.ERROR, (_, data) => {
