@@ -64,6 +64,12 @@ function makeTile(s) {
   hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, () => {
     if (hls.subtitleTracks.length) hls.subtitleTrack = 0;
   });
+  // 字幕を下端から数行持ち上げ、会議名ラベルと重ならないようにする
+  video.textTracks.addEventListener("addtrack", (e) => {
+    e.track.addEventListener("cuechange", function () {
+      for (const cue of this.activeCues || []) { cue.snapToLines = true; cue.line = -4; }
+    });
+  });
   const t = { el, video, hls, stream: s, lowest: 0, highest: 0 };
   hls.on(Hls.Events.MANIFEST_PARSED, () => {
     // ABRに任せず明示切替(2段しかないため)。nextLevelはバッファをフラッシュしないので滑らか
