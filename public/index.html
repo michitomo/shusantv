@@ -184,7 +184,11 @@ function startAsr(t) {
     errors = 0;
   };
   rec.onerror = async (e) => {
-    asrEl.textContent = `⚠ ASR: ${e.error}`;
+    // "network"は実際にはオンデバイス認識サービス未ロードの誤報告(crbug 520350511)。
+    // モデルinstall直後はChromeの完全再起動が必要
+    asrEl.textContent = e.error === "network"
+      ? "⚠ ASR: 音声認識モデル準備中の可能性。ダウンロード完了後、Chromeの完全再起動(⌘Q)が必要です"
+      : `⚠ ASR: ${e.error}`;
     if (e.error === "language-not-supported" && SR.available) {
       const a = await SR.available({ langs: ["ja-JP"], processLocally: true });
       asrEl.textContent = `⚠ ASR: lang-not-supported (available=${a})`;
