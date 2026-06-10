@@ -20,7 +20,6 @@
   .tile.unmuted { border-color: #e5b545; }
   .tile.hit { border-color: #e54545; box-shadow: 0 0 12px #e5454588; }
   .tile video { width: 100%; height: 100%; display: block; background: #000; object-fit: cover; }
-  .tile video::cue { background: rgba(0,0,0,.6); font-size: 14px; }
   .tile .label { position: absolute; left: 0; right: 0; bottom: 0; padding: 6px 10px; font-size: 16px; font-weight: 600;
     background: linear-gradient(transparent, rgba(0,0,0,.85)); display: flex; gap: 8px; align-items: center; }
   .badge { font-size: 13px; padding: 1px 7px; border-radius: 3px; flex-shrink: 0; }
@@ -247,14 +246,6 @@ function makeTile(s) {
   const hls = new Hls({ capLevelToPlayerSize: false, startLevel: 0, maxBufferLength: 15, subtitleDisplay: false });
   const t = { el, video, hls, stream: s, lowest: 0, highest: 0, audio: null, hitUntil: 0 };
 
-  hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, () => {
-    if (hls.subtitleTracks.length) hls.subtitleTrack = 0; // 参議院の公式字幕(非表示・検出専用)
-  });
-  video.textTracks.addEventListener("addtrack", (e) => {
-    e.track.addEventListener("cuechange", function () {
-      for (const cue of this.activeCues || []) detect(t, cue.text);
-    });
-  });
   hls.on(Hls.Events.MANIFEST_PARSED, () => {
     t.lowest = hls.levels.reduce((a, l, i) => (l.bitrate < hls.levels[a].bitrate ? i : a), 0);
     t.highest = hls.levels.reduce((a, l, i) => (l.bitrate > hls.levels[a].bitrate ? i : a), 0);
