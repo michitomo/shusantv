@@ -22,6 +22,7 @@
   .badge.shugiin { background: #2d5a88; }
   .badge.sangiin { background: #7a3d5a; }
   .muteicon { margin-left: auto; opacity: .7; }
+  .quality { font-size: 11px; font-weight: 400; color: #999; flex-shrink: 0; }
   .pending video { opacity: .35; }
   .empty { padding: 40px; color: #888; text-align: center; }
 </style>
@@ -50,6 +51,7 @@ function makeTile(s) {
     <div class="label">
       <span class="badge ${s.house}">${s.house === "shugiin" ? "衆" : "参"}</span>
       <span class="name"></span>
+      <span class="quality"></span>
       <span class="muteicon">🔇</span>
     </div>`;
   el.querySelector(".name").textContent = `${s.time} ${s.name}`;
@@ -62,6 +64,11 @@ function makeTile(s) {
     t.highest = hls.levels.reduce((a, l, i) => (l.bitrate > hls.levels[a].bitrate ? i : a), 0);
     hls.nextLevel = t.lowest;
     video.play().catch(() => {});
+  });
+  hls.on(Hls.Events.LEVEL_SWITCHED, (_, d) => {
+    const lv = hls.levels[d.level];
+    el.querySelector(".quality").textContent = `${lv.height}p ${Math.round(lv.bitrate / 1000)}k`;
+    el.querySelector(".quality").style.color = d.level === t.highest && t.highest !== t.lowest ? "#7c5" : "#999";
   });
   let fails = 0;
   hls.on(Hls.Events.ERROR, (_, data) => {
