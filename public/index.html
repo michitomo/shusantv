@@ -55,11 +55,12 @@ function makeTile(s) {
   el.querySelector(".name").textContent = `${s.time} ${s.name}`;
   const video = el.querySelector("video");
   const hls = new Hls({ capLevelToPlayerSize: false, startLevel: 0, maxBufferLength: 15 });
+  const t = { el, video, hls, stream: s, lowest: 0, highest: 0 };
   hls.on(Hls.Events.MANIFEST_PARSED, () => {
-    // 低負荷のため自動レートの上限を最低レベルにキャップ。unmute時に解除する
-    // (currentLevel直接指定はバッファフラッシュでリバッファするためcappingを使う)
-    const lowest = hls.levels.reduce((a, l, i) => (l.bitrate < hls.levels[a].bitrate ? i : a), 0);
-    hls.autoLevelCapping = lowest;
+    // ABRに任せず明示切替(2段しかないため)。nextLevelはバッファをフラッシュしないので滑らか
+    t.lowest = hls.levels.reduce((a, l, i) => (l.bitrate < hls.levels[a].bitrate ? i : a), 0);
+    t.highest = hls.levels.reduce((a, l, i) => (l.bitrate > hls.levels[a].bitrate ? i : a), 0);
+    hls.nextLevel = t.lowest;
     video.play().catch(() => {});
   });
   let fails = 0;
@@ -73,7 +74,7 @@ function makeTile(s) {
   hls.attachMedia(video);
   el.addEventListener("click", () => toggleMute(s.id));
   grid.appendChild(el);
-  tiles.set(s.id, { el, video, hls, stream: s });
+  tiles.set(s.id, t);
 }
 
 // クリック: そのタイルをフォーカス(拡大+unmute)。フォーカス中のタイルを再クリックで平等グリッドに戻る
@@ -85,7 +86,7 @@ function toggleMute(id) {
     t.video.muted = !on;
     t.el.classList.toggle("unmuted", on);
     t.el.querySelector(".muteicon").textContent = on ? "🔊" : "🔇";
-    t.hls.autoLevelCapping = on ? -1 : 0; // フォーカス中だけキャップ解除(セグメント境界で滑らかに昇格)
+    t.hls.nextLevel = on ? t.highest : t.lowest; // フォーカス中だけ最高レート
   }
   relayout();
 }
