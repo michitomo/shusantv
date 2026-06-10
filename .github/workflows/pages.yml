@@ -1,0 +1,38 @@
+name: scrape-and-deploy
+
+on:
+  schedule:
+    # JST 平日 8:45〜18:55 に5分間隔 (UTC 23:45〜09:55)。cron遅延は許容
+    - cron: "45,50,55 23 * * 0-4"
+    - cron: "*/5 0-9 * * 1-5"
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Scrape live streams
+        run: node scripts/scrape.mjs
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+      - id: deployment
+        uses: actions/deploy-pages@v4

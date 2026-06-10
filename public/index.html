@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>shusantv — 国会中継グリッド</title>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.20/dist/hls.min.js"></script>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #111; color: #eee; font-family: system-ui, sans-serif; }
+  header { display: flex; align-items: baseline; gap: 12px; padding: 8px 14px; }
+  header h1 { font-size: 16px; margin: 0; }
+  header .status { color: #999; font-size: 12px; }
+  #grid { display: grid; gap: 6px; padding: 0 6px 6px; height: calc(100vh - 44px); box-sizing: border-box; }
+  .tile { position: relative; background: #000; border: 2px solid #333; border-radius: 6px; overflow: hidden; cursor: pointer; min-height: 0; min-width: 0; }
+  .tile.unmuted { border-color: #e5b545; }
+  .tile video { width: 100%; height: 100%; display: block; background: #000; object-fit: contain; }
+  .tile .label { position: absolute; left: 0; right: 0; bottom: 0; padding: 4px 8px; font-size: 12px;
+    background: linear-gradient(transparent, rgba(0,0,0,.85)); display: flex; gap: 6px; align-items: center; }
+  .badge { font-size: 10px; padding: 1px 5px; border-radius: 3px; flex-shrink: 0; }
+  .badge.shugiin { background: #2d5a88; }
+  .badge.sangiin { background: #7a3d5a; }
+  .muteicon { margin-left: auto; opacity: .7; }
+  .pending video { opacity: .35; }
+  .empty { padding: 40px; color: #888; text-align: center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>shusantv</h1>
+  <span class="status" id="status">読み込み中…</span>
+  <span class="status">クリックで音声ON/OFF（音声は同時に1つ）</span>
+</header>
+<div id="grid"></div>
+<script>
+const grid = document.getElementById("grid");
+const statusEl = document.getElementById("status");
+const tiles = new Map(); // id -> {el, video, hls}
+
+function makeTile(s) {
+  const el = document.createElement("div");
+  el.className = "tile" + (s.pending ? " pending" : "");
+  el.innerHTML = `
+    <video muted autoplay playsinline crossorigin="anonymous"></video>
+    <div class="label">
+      <span class="badge ${s.house}">${s.house === "shugiin" ? "衆" : "参"}</span>
+      <span class="name"></span>
+      <span class="muteicon">🔇</span>
+    </div>`;
+  el.querySelector(".name").textContent = `${s.time} ${s.name}`;
+  const video = el.querySelector("video");
+  const hls = new Hls({ capLevelToPlayerSize: false, startLevel: 0, maxBufferLength: 15 });
+  hls.on(Hls.Events.MANIFEST_PARSED, () => {
+    // 低負荷のため最低レートに固定。unmute時に解除する
+    const lowest = hls.levels.reduce((a, l, i) => (l.bitrate < hls.levels[a].bitrate ? i : a), 0);
+    hls.currentLevel = lowest;
+    video.play().catch(() => {});
+  });
+  let fails = 0;
+  hls.on(Hls.Events.ERROR, (_, data) => {
+    if (!data.fatal) return;
+    // streams.json が古く中継終了済みの場合はタイルを畳む
+    if (++fails > 3) { hls.destroy(); el.remove(); tiles.delete(s.id); relayout(); return; }
+    setTimeout(() => hls.loadSource(s.m3u8), 5000);
+  });
+  hls.loadSource(s.m3u8);
+  hls.attachMedia(video);
+  el.addEventListener("click", () => toggleMute(s.id));
+  grid.appendChild(el);
+  tiles.set(s.id, { el, video, hls, stream: s });
+}
+
+function toggleMute(id) {
+  for (const [tid, t] of tiles) {
+    const on = tid === id && t.video.muted;
+    t.video.muted = !on;
+    t.el.classList.toggle("unmuted", on);
+    t.el.querySelector(".muteicon").textContent = on ? "🔊" : "🔇";
+    t.hls.currentLevel = on ? -1 : 0; // unmute中だけ自動レート
+  }
+}
+
+// 衆議院は m3u8 が CORS 開放されているため、ブラウザから全 room を直接プローブできる。
+// streams.json (Actions の cron) が遅延していても、開始直後の中継を映像だけ先に拾う。
+const SHU_ROOMS = Array.from({ length: 18 }, (_, i) => `room${String(i + 1).padStart(2, "0")}`);
+async function probeShugiin(known) {
+  const found = [];
+  await Promise.all(
+    SHU_ROOMS.filter((r) => !known.has(r)).map(async (roomId) => {
+      try {
+        const url = `https://hlslive.shugiintv.go.jp/${roomId}/amlst:${roomId}/playlist.m3u8`;
+        const res = await fetch(url, { cache: "no-store" });
+        if (res.ok && (await res.text()).includes("#EXTM3U"))
+          found.push({ house: "shugiin", id: roomId, name: `中継中 (${roomId})`, time: "", m3u8: url });
+      } catch {}
+    })
+  );
+  return found;
+}
+
+async function refresh() {
+  try {
+    const { streams, updatedAt, errors } = await (await fetch("streams.json", { cache: "no-store" })).json();
+    const knownRooms = new Set(streams.map((s) => s.id));
+    streams.push(...(await probeShugiin(knownRooms)));
+    const ids = new Set(streams.map((s) => s.id));
+    for (const [id, t] of tiles) {
+      if (!ids.has(id)) { t.hls.destroy(); t.el.remove(); tiles.delete(id); }
+    }
+    for (const s of streams) if (!tiles.has(s.id)) makeTile(s);
+    relayout();
+    statusEl.textContent =
+      `${streams.length}件中継中 (衆${streams.filter(s=>s.house==="shugiin").length}/参${streams.filter(s=>s.house==="sangiin").length})` +
+      ` 更新: ${new Date(updatedAt).toLocaleTimeString("ja-JP")}` +
+      (errors.length ? ` ⚠ ${errors.join("; ")}` : "");
+    grid.querySelector(".empty")?.remove();
+    if (!streams.length) grid.insertAdjacentHTML("beforeend", `<div class="empty">現在中継中の会議はありません</div>`);
+  } catch (e) {
+    statusEl.textContent = "一覧取得エラー: " + e;
+  }
+}
+// タイル数とビューポートから 16:9 のタイル面積が最大になる列数を選び、画面全体を埋める
+function relayout() {
+  const n = tiles.size;
+  if (!n) return;
+  const W = grid.clientWidth, H = grid.clientHeight, GAP = 6;
+  let best = { cols: 1, area: 0 };
+  for (let cols = 1; cols <= n; cols++) {
+    const rows = Math.ceil(n / cols);
+    const w = (W - GAP * (cols - 1)) / cols;
+    const h = (H - GAP * (rows - 1)) / rows;
+    const tw = Math.min(w, h * 16 / 9);
+    if (tw * (tw * 9 / 16) > best.area) best = { cols, area: tw * (tw * 9 / 16) };
+  }
+  grid.style.gridTemplateColumns = `repeat(${best.cols}, 1fr)`;
+  grid.style.gridAutoRows = "1fr";
+}
+window.addEventListener("resize", relayout);
+
+refresh();
+setInterval(refresh, 60_000);
+</script>
+</body>
+</html>
