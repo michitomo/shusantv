@@ -136,7 +136,7 @@ class TranscriptSession {
     this.startEpoch = null;   // 配信開始の実時刻(ms)。ライブのみ
     this.pollTimer = null;
   }
-  stop() { this.alive = false; clearInterval(this.pollTimer); }
+  stop() { this.alive = false; clearTimeout(this.pollTimer); }
 
   async resolveSubsUrl() {
     let masterUrl = this.entry.m3u8;
@@ -194,18 +194,37 @@ class TranscriptSession {
       }
       fresh.sort((a, b) => a.t - b.t);
       // 同じ字幕がセグメントを跨いで開始時刻ズレで再掲されるため、近接する同文 cue は1つに統合する
-      const merged = [];
-      for (const cue of fresh) {
-        const last = merged[merged.length - 1] ?? this.cues[this.cues.length - 1];
-        if (last && last.text === cue.text && cue.t - last.end <= 6) {
-          last.end = Math.max(last.end, cue.end);
-          if (this.lastEnd != null) this.lastEnd = Math.max(this.lastEnd, last.end);
-          continue;
+      const isAppendOnly =
+        !fresh.length || !this.cues.length || fresh[0].t >= this.cues[this.cues.length - 1].t;
+      if (isAppendOnly) {
+        const merged = [];
+        for (const cue of fresh) {
+          const last = merged[merged.length - 1] ?? this.cues[this.cues.length - 1];
+          if (last && last.text === cue.text && cue.t - last.end <= 6) {
+            last.end = Math.max(last.end, cue.end);
+            if (this.lastEnd != null) this.lastEnd = Math.max(this.lastEnd, last.end);
+            continue;
+          }
+          merged.push(cue);
         }
-        merged.push(cue);
+        this.cues.push(...merged);
+        appendCues(this, merged);
+      } else {
+        // 再試行で過去のセグメントが後から届いた場合: 全体を時刻順に統合し直して再描画
+        const all = [...this.cues, ...fresh].sort((a, b) => a.t - b.t);
+        this.cues = [];
+        for (const cue of all) {
+          const last = this.cues[this.cues.length - 1];
+          if (last && last.text === cue.text && cue.t - last.end <= 6) {
+            last.end = Math.max(last.end, cue.end);
+            continue;
+          }
+          this.cues.push(cue);
+        }
+        transcriptEl.innerHTML = "";
+        this.lastEnd = null;
+        appendCues(this, this.cues);
       }
-      this.cues.push(...merged);
-      appendCues(this, merged);
     }
     return playlist.includes("#EXT-X-ENDLIST");
   }
@@ -278,10 +297,11 @@ $("filter").addEventListener("input", () => {
 // ---- ダウンロード ----
 function download(name, mime, body) {
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([body], { type: mime }));
+  const url = URL.createObjectURL(new Blob([body], { type: mime }));
+  a.href = url;
   a.download = name;
   a.click();
-  URL.revokeObjectURL(a.href);
+  setTimeout(() => URL.revokeObjectURL(url), 1000); // 即時解放するとダウンロード開始前にURLが無効になるブラウザがある
 }
 const today = () => new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
 // 取得失敗→再試行で cue が後追い追加されることがあるため、書き出し時は時刻順に揃える
@@ -316,14 +336,18 @@ async function openMeeting(entry) {
     if (!sess.cues.length) showMessage(ended ? "字幕がありません" : "まだ字幕がありません(発言が始まると表示されます)");
     if (entry.live && !ended) {
       statusEl.textContent = `${sess.cues.length} 発言 — 中継中(自動更新)`;
-      sess.pollTimer = setInterval(async () => {
+      // pull が15秒を超えても多重実行されないよう、完了してから次回を予約する
+      const poll = async () => {
+        if (!sess.alive) return;
         try {
           ended = await sess.pull();
           if (!sess.alive) return;
           statusEl.textContent = `${sess.cues.length} 発言 — ${ended ? "配信終了" : "中継中(自動更新)"}`;
-          if (ended) clearInterval(sess.pollTimer);
+          if (ended) return;
         } catch { /* 一時的な失敗は次回ポーリングに任せる */ }
-      }, LIVE_POLL_MS);
+        sess.pollTimer = setTimeout(poll, LIVE_POLL_MS);
+      };
+      sess.pollTimer = setTimeout(poll, LIVE_POLL_MS);
     } else {
       statusEl.textContent = `${sess.cues.length} 発言`;
     }
