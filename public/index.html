@@ -57,6 +57,12 @@
   .tile.hit .tally { display: flex; }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
 
+  /* 音声出力中バッジ (フォーカスタイル)。タリーと同意匠のミント版 */
+  .pgm { position: absolute; top: 8px; left: 8px; z-index: 2; display: none; align-items: center; gap: 6px;
+    background: rgba(0,0,0,.55); backdrop-filter: blur(8px); border: 1px solid rgba(95,224,183,.5);
+    color: var(--accent); border-radius: 999px; padding: 2px 10px; font-size: 11px; font-weight: 800; letter-spacing: .12em; }
+  .tile.unmuted .pgm { display: flex; }
+
   /* 下部ラベル: ガラス帯 + 院カラードット */
   .tile .label { position: absolute; left: 0; right: 0; bottom: 0; padding: 7px 12px;
     font-size: 14px; font-weight: 600; letter-spacing: .02em;
@@ -313,6 +319,7 @@ function makeTile(s) {
   el.innerHTML = `
     <video muted autoplay playsinline crossorigin="anonymous"></video>
     <div class="tally">ON AIR</div>
+    <div class="pgm">🔊 音声</div>
     <div class="asr"></div>
     <div class="label">
       <span class="badge ${s.house}">${s.house === "shugiin" ? "衆" : "参"}</span>
@@ -411,24 +418,51 @@ function relayout() {
   if (!n) return;
   grid.style.height = `calc(100vh - ${document.querySelector("header").offsetHeight}px)`;
   const W = grid.clientWidth, H = grid.clientHeight, GAP = 8;
-  for (const t of tiles.values()) t.el.style.gridArea = "";
+  for (const t of tiles.values()) {
+    t.el.style.gridArea = "";
+    t.el.style.height = ""; t.el.style.alignSelf = "";
+    t.el.style.width = ""; t.el.style.justifySelf = "";
+  }
   if (focusedId && tiles.has(focusedId) && n > 1) {
+    // フォーカスを大きく取る。縮小タイルはクロップが縦3:4より細くならないようセルいっぱいに
+    // 伸ばさず手前で止める。フォーカス側は16:9(ノークロップ)以上には広げない
     const others = n - 1;
-    grid.style.justifyContent = "";
-    grid.style.alignContent = "";
+    const inner = { w: W - 16, h: H - 16 }; // #grid の padding 8px ぶん
     if (H > W) {
-      // 縦長画面: フォーカスを上に大きく、残りは下に横並び
+      // 縦長画面: フォーカスを上に大きく(3:4クロップまで)、下段は高さ1/5。
+      // 縮小タイルは幅を16:9で打ち止めにするので低い段でも破綻しない
+      const cellW = (inner.w - GAP * (others - 1)) / others;
+      let ho = (inner.h - GAP) / 5;
+      const hf = Math.min(inner.h - GAP - ho, inner.w * 4 / 3);
+      ho = Math.min(inner.h - GAP - hf, cellW * 4 / 3, hf * 2 / 3);
       grid.style.gridTemplateColumns = `repeat(${others}, 1fr)`;
-      grid.style.gridTemplateRows = "4fr 1fr";
+      grid.style.gridTemplateRows = `${hf}px ${ho}px`;
+      grid.style.justifyContent = "";
+      grid.style.alignContent = "center";
       tiles.get(focusedId).el.style.gridArea = `1 / 1 / 2 / ${others + 1}`;
       let col = 1;
-      for (const [tid, t] of tiles) if (tid !== focusedId) t.el.style.gridArea = `2 / ${col++}`;
+      for (const [tid, t] of tiles) if (tid !== focusedId) {
+        t.el.style.gridArea = `2 / ${col++}`;
+        t.el.style.width = `${Math.min(cellW, ho * 16 / 9)}px`;
+        t.el.style.justifySelf = "center";
+      }
     } else {
-      grid.style.gridTemplateColumns = "4fr 1fr";
+      // 横画面: 縮小列は幅1/5。タイル高さを3:4クロップで打ち止めにするので細くても破綻しない
+      const cellH = (inner.h - GAP * (others - 1)) / others;
+      let wo = (inner.w - GAP) / 5;
+      const wf = Math.min(inner.w - GAP - wo, inner.h * 16 / 9);
+      wo = Math.min(inner.w - GAP - wf, cellH * 16 / 9, wf * 2 / 3);
+      grid.style.gridTemplateColumns = `${wf}px ${wo}px`;
       grid.style.gridTemplateRows = `repeat(${others}, 1fr)`;
+      grid.style.justifyContent = "center";
+      grid.style.alignContent = "";
       tiles.get(focusedId).el.style.gridArea = `1 / 1 / ${others + 1} / 2`;
       let row = 1;
-      for (const [tid, t] of tiles) if (tid !== focusedId) t.el.style.gridArea = `${row++} / 2`;
+      for (const [tid, t] of tiles) if (tid !== focusedId) {
+        t.el.style.gridArea = `${row++} / 2`;
+        t.el.style.height = `${Math.min(cellH, wo * 4 / 3)}px`;
+        t.el.style.alignSelf = "center";
+      }
     }
     return;
   }
