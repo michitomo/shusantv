@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>shusantv — 文字起こし</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --glass: rgba(18, 18, 22, .55);
+    --glass-border: rgba(255, 255, 255, .08);
+    --accent: #5fe0b7;
+    --tally: #ff3b30;
+    --san: #d57aa5;
+  }
+  body { margin: 0; background: #050507; color: #eee;
+    font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", system-ui, sans-serif; }
+
+  header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 12px;
+    padding: 8px 16px; flex-wrap: wrap;
+    background: var(--glass); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    border-bottom: 1px solid var(--glass-border); }
+  header h1 { font-size: 14px; margin: 0; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }
+  header h1 a { color: inherit; text-decoration: none; }
+  header h1 a:hover { color: var(--accent); }
+  header .status { color: #9a9aa2; font-size: 11px; letter-spacing: .02em; }
+  select, input[type="search"], button {
+    background: rgba(255,255,255,.06); border: 1px solid var(--glass-border); color: #eee;
+    border-radius: 999px; padding: 4px 12px; font-size: 12px; outline: none; }
+  select:focus, input[type="search"]:focus { border-color: var(--accent); }
+  select { max-width: 320px; }
+  button { cursor: pointer; transition: border-color .2s; }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .4; cursor: default; }
+  label.follow { font-size: 11px; color: #9a9aa2; user-select: none; display: flex; align-items: center; gap: 4px; }
+  label.follow input { accent-color: var(--accent); }
+  .live-dot::before { content: "●"; color: var(--tally); font-size: 9px; margin-right: 5px;
+    animation: pulse 2.4s ease-in-out infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+
+  #transcript { max-width: 860px; margin: 0 auto; padding: 16px 16px 80px; }
+  .cue { display: flex; gap: 14px; padding: 5px 10px; border-radius: 8px; line-height: 1.7; }
+  .cue:hover { background: rgba(255,255,255,.04); }
+  .cue.hidden { display: none; }
+  .cue .t { flex-shrink: 0; width: 72px; color: #7da7c7; font-size: 12px; line-height: 2;
+    font-variant-numeric: tabular-nums; text-align: right; cursor: default; }
+  .cue .txt { font-size: 14.5px; }
+  .cue .txt mark { background: rgba(95,224,183,.3); color: #fff; border-radius: 3px; }
+  .gap { text-align: center; color: #55555e; font-size: 11px; letter-spacing: .2em; padding: 14px 0; }
+  #message { padding: 48px; color: #6a6a72; text-align: center; letter-spacing: .1em; font-size: 13px; }
+  #message.error { color: #c97a7a; }
+
+  footer { position: fixed; left: 0; right: 0; bottom: 0; padding: 6px 16px;
+    background: var(--glass); backdrop-filter: blur(14px); border-top: 1px solid var(--glass-border);
+    color: #6a6a72; font-size: 10px; text-align: center; }
+  footer a { color: #7da7c7; text-decoration: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1><a href="./">shusantv</a> <span style="color:#6a6a72">/ 文字起こし</span></h1>
+  <select id="meeting"><option value="">読み込み中…</option></select>
+  <input id="filter" type="search" placeholder="絞り込み (議員名・キーワード)">
+  <label class="follow"><input type="checkbox" id="follow" checked> 最新に追尾</label>
+  <button id="dlTxt" disabled>TXT</button>
+  <button id="dlVtt" disabled>VTT</button>
+  <span class="status" id="status"></span>
+</header>
+<div id="transcript"><div id="message">会議を選択してください</div></div>
+<footer>
+  字幕は<a href="https://www.webtv.sangiin.go.jp/webtv/" target="_blank" rel="noopener">参議院インターネット審議中継</a>の音声自動認識によるもので誤変換を含みます。正式な記録は会議録を参照。字幕付き映像・字幕の転載は禁止されています(本ページは個人用ビューアです)
+</footer>
+<script>
+const $ = (id) => document.getElementById(id);
+const statusEl = $("status");
+const SEG_CONCURRENCY = 8;
+const LIVE_POLL_MS = 15_000;
+
+async function fetchOk(url, opts) {
+  // CDN がたまに落とすのでリトライ1回
+  for (let i = 0; ; i++) {
+    try {
+      const res = await fetch(url, opts);
+      if (!res.ok) throw new Error(`${res.status} ${url}`);
+      return res;
+    } catch (e) {
+      if (i >= 1) throw e;
+      await new Promise((r) => setTimeout(r, 800));
+    }
+  }
+}
+
+// ---- m3u8 / VTT パース ----
+function subtitleUri(master, baseUrl) {
+  const m = master.match(/#EXT-X-MEDIA:TYPE=SUBTITLES[^\n]*URI="([^"]+)"/);
+  return m ? new URL(m[1], baseUrl).href : null;
+}
+function segmentUrls(playlist, baseUrl) {
+  return playlist.split(/\r?\n/).map((l) => l.trim())
+    .filter((l) => l && !l.startsWith("#"))
+    .map((l) => new URL(l, baseUrl).href);
+}
+function parseVtt(text) {
+  const cues = [];
+  const lines = text.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^(\d{2}):(\d{2}):(\d{2})\.(\d{3}) --> (\d{2}):(\d{2}):(\d{2})\.(\d{3})/);
+    if (!m) continue;
+    const sec = (h, mi, s, ms) => +h * 3600 + +mi * 60 + +s + +ms / 1000;
+    let body = "";
+    while (++i < lines.length && lines[i].trim() !== "") body += (body ? "\n" : "") + lines[i].trim();
+    if (body) cues.push({ t: sec(m[1], m[2], m[3], m[4]), end: sec(m[5], m[6], m[7], m[8]), text: body });
+  }
+  return cues;
+}
+const fmtRel = (t) => {
+  const h = Math.floor(t / 3600), m = Math.floor(t / 60) % 60, s = Math.floor(t) % 60;
+  return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+};
+const fmtJst = new Intl.DateTimeFormat("ja-JP", { timeZone: "Asia/Tokyo", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+
+// ---- セッション ----
+// 会議切り替えで前のセッション(ポーリング・取得中フェッチ)を無効化する
+let session = null;
+
+class TranscriptSession {
+  constructor(entry) {
+    this.entry = entry;       // { name, m3u8?, hash?, channelInfo?, live }
+    this.alive = true;
+    this.cues = [];           // 時刻順
+    this.keys = new Set();    // 重複排除: "start|text"
+    this.lastEnd = null;      // 描画済み最終 cue の終了秒(休憩区切り用)
+    this.fetched = 0;         // 取得済みセグメント数(EVENT型は末尾にのみ追記される)
+    this.subsUrl = null;
+    this.startEpoch = null;   // 配信開始の実時刻(ms)。ライブのみ
+    this.pollTimer = null;
+  }
+  stop() { this.alive = false; clearInterval(this.pollTimer); }
+
+  async resolveSubsUrl() {
+    let masterUrl = this.entry.m3u8;
+    if (!masterUrl) { // VOD: mediasp プレーヤーJSから m3u8 を取り出す
+      const js = await (await fetchOk(`https://public.mediasp.jp/v1/player?hash=${this.entry.hash}`)).text();
+      const m = js.match(/url:"(https:[^"]+\.m3u8)"/);
+      if (!m) throw new Error("VODの動画URLを解決できませんでした");
+      masterUrl = m[1];
+    }
+    const master = await (await fetchOk(masterUrl)).text();
+    this.subsUrl = subtitleUri(master, masterUrl);
+    if (!this.subsUrl) throw new Error("字幕トラックがありません(字幕は2024年8月以降の中継のみ)");
+  }
+
+  async loadChannelInfo() {
+    if (!this.entry.channelInfo) return;
+    try {
+      const info = await (await fetchOk(this.entry.channelInfo)).json();
+      const start = info?.status?.program_start;
+      if (start) this.startEpoch = new Date(start).getTime();
+    } catch { /* 実時刻表示なしで続行 */ }
+  }
+
+  fmtTime(t) {
+    return this.startEpoch ? fmtJst.format(new Date(this.startEpoch + t * 1000)) : fmtRel(t);
+  }
+
+  // プレイリストを読み、未取得セグメントの字幕を取り込む。戻り値: 配信終了済みか
+  async pull(onProgress) {
+    const playlist = await (await fetchOk(this.subsUrl, { cache: "no-store" })).text();
+    const segs = segmentUrls(playlist, this.subsUrl);
+    const todo = segs.slice(this.fetched);
+    if (todo.length) {
+      const texts = new Array(todo.length);
+      let next = 0, done = 0;
+      await Promise.all(Array.from({ length: Math.min(SEG_CONCURRENCY, todo.length) }, async () => {
+        while (next < todo.length && this.alive) {
+          const i = next++;
+          texts[i] = await fetchOk(todo[i]).then((r) => r.text()).catch(() => "");
+          onProgress?.(++done, todo.length);
+        }
+      }));
+      if (!this.alive) return true;
+      const fresh = [];
+      for (const text of texts) {
+        for (const cue of parseVtt(text)) {
+          const key = `${cue.t.toFixed(3)}|${cue.text}`;
+          if (this.keys.has(key)) continue;
+          this.keys.add(key);
+          fresh.push(cue);
+        }
+      }
+      fresh.sort((a, b) => a.t - b.t);
+      // 同じ字幕がセグメントを跨いで開始時刻ズレで再掲されるため、近接する同文 cue は1つに統合する
+      const merged = [];
+      for (const cue of fresh) {
+        const last = merged[merged.length - 1] ?? this.cues[this.cues.length - 1];
+        if (last && last.text === cue.text && cue.t - last.end <= 6) {
+          last.end = Math.max(last.end, cue.end);
+          if (this.lastEnd != null) this.lastEnd = Math.max(this.lastEnd, last.end);
+          continue;
+        }
+        merged.push(cue);
+      }
+      this.cues.push(...merged);
+      appendCues(this, merged);
+      this.fetched = segs.length;
+    }
+    return playlist.includes("#EXT-X-ENDLIST");
+  }
+}
+
+// ---- 描画 ----
+const transcriptEl = $("transcript");
+function showMessage(text, isError) {
+  transcriptEl.innerHTML = "";
+  const d = document.createElement("div");
+  d.id = "message";
+  if (isError) d.className = "error";
+  d.textContent = text;
+  transcriptEl.appendChild(d);
+}
+function appendCues(sess, cues) {
+  if (!cues.length) return;
+  $("message")?.remove();
+  const frag = document.createDocumentFragment();
+  const query = $("filter").value.trim();
+  for (const cue of cues) {
+    if (sess.lastEnd != null && cue.t - sess.lastEnd > 600) { // 10分以上の無音(休憩)は区切りを入れる
+      const gap = document.createElement("div");
+      gap.className = "gap";
+      gap.textContent = `─ 休憩 (${fmtRel(cue.t - sess.lastEnd)}) ─`;
+      frag.appendChild(gap);
+    }
+    sess.lastEnd = cue.end;
+    const row = document.createElement("div");
+    row.className = "cue";
+    const t = document.createElement("span");
+    t.className = "t";
+    t.textContent = sess.fmtTime(cue.t);
+    t.title = `開始から ${fmtRel(cue.t)}`;
+    const txt = document.createElement("span");
+    txt.className = "txt";
+    txt.textContent = cue.text;
+    row.append(t, txt);
+    if (query) applyFilterToRow(row, query);
+    frag.appendChild(row);
+  }
+  transcriptEl.appendChild(frag);
+  if ($("follow").checked && sess.entry.live) window.scrollTo(0, document.body.scrollHeight);
+}
+
+// ---- 絞り込み ----
+function applyFilterToRow(row, query) {
+  const txt = row.querySelector(".txt");
+  const hit = !query || txt.textContent.includes(query);
+  row.classList.toggle("hidden", !hit);
+  if (hit && query) {
+    txt.innerHTML = "";
+    for (const part of txt.textContent.split(query).flatMap((p, i) => (i ? [query, p] : [p]))) {
+      if (part === query) { const m = document.createElement("mark"); m.textContent = part; txt.appendChild(m); }
+      else txt.appendChild(document.createTextNode(part));
+    }
+  } else if (txt.querySelector("mark")) {
+    txt.textContent = txt.textContent; // mark を除去
+  }
+}
+$("filter").addEventListener("input", () => {
+  const query = $("filter").value.trim();
+  for (const row of transcriptEl.querySelectorAll(".cue")) applyFilterToRow(row, query);
+});
+
+// ---- ダウンロード ----
+function download(name, mime, body) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([body], { type: mime }));
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+const today = () => new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
+$("dlTxt").onclick = () => {
+  if (!session) return;
+  const body = session.cues.map((c) => `${session.fmtTime(c.t)}\t${c.text.replace(/\n/g, " ")}`).join("\n");
+  download(`${today()}_${session.entry.name}.txt`, "text/plain;charset=utf-8", body);
+};
+$("dlVtt").onclick = () => {
+  if (!session) return;
+  const ts = (t) => `${String(Math.floor(t / 3600)).padStart(2, "0")}:${String(Math.floor(t / 60) % 60).padStart(2, "0")}:${(t % 60).toFixed(3).padStart(6, "0")}`;
+  const body = "WEBVTT\n\n" + session.cues.map((c) => `${ts(c.t)} --> ${ts(c.end)}\n${c.text}`).join("\n\n") + "\n";
+  download(`${today()}_${session.entry.name}.vtt`, "text/vtt;charset=utf-8", body);
+};
+
+// ---- 会議の選択と読み込み ----
+async function openMeeting(entry) {
+  session?.stop();
+  const sess = (session = new TranscriptSession(entry));
+  showMessage("字幕トラックを解決中…");
+  $("dlTxt").disabled = $("dlVtt").disabled = true;
+  try {
+    await Promise.all([sess.resolveSubsUrl(), sess.loadChannelInfo()]);
+    if (!sess.alive) return;
+    const progress = (done, total) => {
+      if (sess.alive) statusEl.textContent = `字幕取得中 ${done}/${total}`;
+    };
+    let ended = await sess.pull(progress);
+    if (!sess.alive) return;
+    $("dlTxt").disabled = $("dlVtt").disabled = false;
+    if (!sess.cues.length) showMessage(ended ? "字幕がありません" : "まだ字幕がありません(発言が始まると表示されます)");
+    if (entry.live && !ended) {
+      statusEl.textContent = `${sess.cues.length} 発言 — 中継中(自動更新)`;
+      sess.pollTimer = setInterval(async () => {
+        try {
+          ended = await sess.pull();
+          if (!sess.alive) return;
+          statusEl.textContent = `${sess.cues.length} 発言 — ${ended ? "配信終了" : "中継中(自動更新)"}`;
+          if (ended) clearInterval(sess.pollTimer);
+        } catch { /* 一時的な失敗は次回ポーリングに任せる */ }
+      }, LIVE_POLL_MS);
+    } else {
+      statusEl.textContent = `${sess.cues.length} 発言`;
+    }
+  } catch (e) {
+    if (sess.alive) { showMessage(String(e.message || e), true); statusEl.textContent = ""; }
+  }
+}
+
+async function init() {
+  const select = $("meeting");
+  let data;
+  try {
+    data = await (await fetchOk("streams.json")).json();
+  } catch {
+    showMessage("streams.json を取得できません(ローカルは server.js 経由で開いてください)", true);
+    return;
+  }
+  const lives = (data.streams || []).filter((s) => s.house === "sangiin" && !s.pending);
+  const vods = data.vod || [];
+  const entries = new Map(); // id -> entry
+  select.innerHTML = "";
+  const add = (group, entry, label) => {
+    entries.set(entry.id, entry);
+    const opt = document.createElement("option");
+    opt.value = entry.id;
+    opt.textContent = label;
+    group.appendChild(opt);
+  };
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = `会議を選択 (${lives.length + vods.length}件)`;
+  select.appendChild(placeholder);
+  if (lives.length) {
+    const g = document.createElement("optgroup");
+    g.label = "中継中";
+    for (const s of lives) add(g, { ...s, live: true }, `🔴 ${s.name} ${s.time ?? ""}`);
+    select.appendChild(g);
+  }
+  if (vods.length) {
+    const g = document.createElement("optgroup");
+    g.label = "本日の録画";
+    for (const v of vods) add(g, { ...v, live: false }, v.name);
+    select.appendChild(g);
+  }
+  if (!entries.size) {
+    placeholder.textContent = "本日の参議院の中継・録画はありません";
+    showMessage("本日の参議院の中継・録画はありません(字幕があるのは参議院のみ)");
+    return;
+  }
+  select.onchange = () => {
+    const entry = entries.get(select.value);
+    history.replaceState(null, "", select.value ? `?id=${select.value}` : location.pathname);
+    if (entry) openMeeting(entry);
+  };
+  // ?id=sidNNNN での直リンク
+  const wanted = new URLSearchParams(location.search).get("id");
+  if (wanted && entries.has(wanted)) {
+    select.value = wanted;
+    openMeeting(entries.get(wanted));
+  }
+}
+init();
+</script>
+</body>
+</html>
