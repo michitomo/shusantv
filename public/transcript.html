@@ -73,7 +73,7 @@
 <script>
 const $ = (id) => document.getElementById(id);
 const statusEl = $("status");
-const SEG_CONCURRENCY = 8;
+const SEG_CONCURRENCY = 32; // CDNはHTTP/2なので多重化される。長時間会議(4000セグメント超)の初回読み込み対策
 const LIVE_POLL_MS = 15_000;
 
 async function fetchOk(url, opts) {
@@ -104,9 +104,10 @@ function parseVtt(text) {
   const cues = [];
   const lines = text.split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
-    const m = lines[i].match(/^(\d{2}):(\d{2}):(\d{2})\.(\d{3}) --> (\d{2}):(\d{2}):(\d{2})\.(\d{3})/);
+    // WebVTT は1時間未満だと時間部を省略できる(MM:SS.mmm)
+    const m = lines[i].match(/^(?:(\d{2,}):)?(\d{2}):(\d{2})\.(\d{3}) --> (?:(\d{2,}):)?(\d{2}):(\d{2})\.(\d{3})/);
     if (!m) continue;
-    const sec = (h, mi, s, ms) => +h * 3600 + +mi * 60 + +s + +ms / 1000;
+    const sec = (h, mi, s, ms) => (h ? +h * 3600 : 0) + +mi * 60 + +s + +ms / 1000;
     let body = "";
     while (++i < lines.length && lines[i].trim() !== "") body += (body ? "\n" : "") + lines[i].trim();
     if (body) cues.push({ t: sec(m[1], m[2], m[3], m[4]), end: sec(m[5], m[6], m[7], m[8]), text: body });
@@ -130,12 +131,12 @@ class TranscriptSession {
     this.cues = [];           // 時刻順
     this.keys = new Set();    // 重複排除: "start|text"
     this.lastEnd = null;      // 描画済み最終 cue の終了秒(休憩区切り用)
-    this.fetched = 0;         // 取得済みセグメント数(EVENT型は末尾にのみ追記される)
+    this.fetchedUrls = new Set(); // 取得成功したセグメントURL。失敗分は次回ポーリングで再試行される
     this.subsUrl = null;
     this.startEpoch = null;   // 配信開始の実時刻(ms)。ライブのみ
     this.pollTimer = null;
   }
-  stop() { this.alive = false; clearInterval(this.pollTimer); }
+  stop() { this.alive = false; clearTimeout(this.pollTimer); }
 
   async resolveSubsUrl() {
     let masterUrl = this.entry.m3u8;
@@ -167,20 +168,23 @@ class TranscriptSession {
   async pull(onProgress) {
     const playlist = await (await fetchOk(this.subsUrl, { cache: "no-store" })).text();
     const segs = segmentUrls(playlist, this.subsUrl);
-    const todo = segs.slice(this.fetched);
+    const todo = segs.filter((url) => !this.fetchedUrls.has(url));
     if (todo.length) {
       const texts = new Array(todo.length);
       let next = 0, done = 0;
       await Promise.all(Array.from({ length: Math.min(SEG_CONCURRENCY, todo.length) }, async () => {
         while (next < todo.length && this.alive) {
           const i = next++;
-          texts[i] = await fetchOk(todo[i]).then((r) => r.text()).catch(() => "");
+          texts[i] = await fetchOk(todo[i]).then((r) => r.text()).catch(() => null);
           onProgress?.(++done, todo.length);
         }
       }));
       if (!this.alive) return true;
       const fresh = [];
-      for (const text of texts) {
+      for (let i = 0; i < todo.length; i++) {
+        const text = texts[i];
+        if (text === null) continue; // 失敗分は fetchedUrls に入れず、次のポーリングで再試行
+        this.fetchedUrls.add(todo[i]);
         for (const cue of parseVtt(text)) {
           const key = `${cue.t.toFixed(3)}|${cue.text}`;
           if (this.keys.has(key)) continue;
@@ -190,19 +194,37 @@ class TranscriptSession {
       }
       fresh.sort((a, b) => a.t - b.t);
       // 同じ字幕がセグメントを跨いで開始時刻ズレで再掲されるため、近接する同文 cue は1つに統合する
-      const merged = [];
-      for (const cue of fresh) {
-        const last = merged[merged.length - 1] ?? this.cues[this.cues.length - 1];
-        if (last && last.text === cue.text && cue.t - last.end <= 6) {
-          last.end = Math.max(last.end, cue.end);
-          if (this.lastEnd != null) this.lastEnd = Math.max(this.lastEnd, last.end);
-          continue;
+      const isAppendOnly =
+        !fresh.length || !this.cues.length || fresh[0].t >= this.cues[this.cues.length - 1].t;
+      if (isAppendOnly) {
+        const merged = [];
+        for (const cue of fresh) {
+          const last = merged[merged.length - 1] ?? this.cues[this.cues.length - 1];
+          if (last && last.text === cue.text && cue.t - last.end <= 6) {
+            last.end = Math.max(last.end, cue.end);
+            if (this.lastEnd != null) this.lastEnd = Math.max(this.lastEnd, last.end);
+            continue;
+          }
+          merged.push(cue);
         }
-        merged.push(cue);
+        this.cues.push(...merged);
+        appendCues(this, merged);
+      } else {
+        // 再試行で過去のセグメントが後から届いた場合: 全体を時刻順に統合し直して再描画
+        const all = [...this.cues, ...fresh].sort((a, b) => a.t - b.t);
+        this.cues = [];
+        for (const cue of all) {
+          const last = this.cues[this.cues.length - 1];
+          if (last && last.text === cue.text && cue.t - last.end <= 6) {
+            last.end = Math.max(last.end, cue.end);
+            continue;
+          }
+          this.cues.push(cue);
+        }
+        transcriptEl.innerHTML = "";
+        this.lastEnd = null;
+        appendCues(this, this.cues);
       }
-      this.cues.push(...merged);
-      appendCues(this, merged);
-      this.fetched = segs.length;
     }
     return playlist.includes("#EXT-X-ENDLIST");
   }
@@ -263,29 +285,36 @@ function applyFilterToRow(row, query) {
     txt.textContent = txt.textContent; // mark を除去
   }
 }
+let filterTimer = null; // 数千行を毎キー走査しないよう debounce
 $("filter").addEventListener("input", () => {
-  const query = $("filter").value.trim();
-  for (const row of transcriptEl.querySelectorAll(".cue")) applyFilterToRow(row, query);
+  clearTimeout(filterTimer);
+  filterTimer = setTimeout(() => {
+    const query = $("filter").value.trim();
+    for (const row of transcriptEl.querySelectorAll(".cue")) applyFilterToRow(row, query);
+  }, 200);
 });
 
 // ---- ダウンロード ----
 function download(name, mime, body) {
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([body], { type: mime }));
+  const url = URL.createObjectURL(new Blob([body], { type: mime }));
+  a.href = url;
   a.download = name;
   a.click();
-  URL.revokeObjectURL(a.href);
+  setTimeout(() => URL.revokeObjectURL(url), 1000); // 即時解放するとダウンロード開始前にURLが無効になるブラウザがある
 }
 const today = () => new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
+// 取得失敗→再試行で cue が後追い追加されることがあるため、書き出し時は時刻順に揃える
+const sortedCues = () => [...session.cues].sort((a, b) => a.t - b.t);
 $("dlTxt").onclick = () => {
   if (!session) return;
-  const body = session.cues.map((c) => `${session.fmtTime(c.t)}\t${c.text.replace(/\n/g, " ")}`).join("\n");
+  const body = sortedCues().map((c) => `${session.fmtTime(c.t)}\t${c.text.replace(/\n/g, " ")}`).join("\n");
   download(`${today()}_${session.entry.name}.txt`, "text/plain;charset=utf-8", body);
 };
 $("dlVtt").onclick = () => {
   if (!session) return;
   const ts = (t) => `${String(Math.floor(t / 3600)).padStart(2, "0")}:${String(Math.floor(t / 60) % 60).padStart(2, "0")}:${(t % 60).toFixed(3).padStart(6, "0")}`;
-  const body = "WEBVTT\n\n" + session.cues.map((c) => `${ts(c.t)} --> ${ts(c.end)}\n${c.text}`).join("\n\n") + "\n";
+  const body = "WEBVTT\n\n" + sortedCues().map((c) => `${ts(c.t)} --> ${ts(c.end)}\n${c.text}`).join("\n\n") + "\n";
   download(`${today()}_${session.entry.name}.vtt`, "text/vtt;charset=utf-8", body);
 };
 
@@ -307,14 +336,18 @@ async function openMeeting(entry) {
     if (!sess.cues.length) showMessage(ended ? "字幕がありません" : "まだ字幕がありません(発言が始まると表示されます)");
     if (entry.live && !ended) {
       statusEl.textContent = `${sess.cues.length} 発言 — 中継中(自動更新)`;
-      sess.pollTimer = setInterval(async () => {
+      // pull が15秒を超えても多重実行されないよう、完了してから次回を予約する
+      const poll = async () => {
+        if (!sess.alive) return;
         try {
           ended = await sess.pull();
           if (!sess.alive) return;
           statusEl.textContent = `${sess.cues.length} 発言 — ${ended ? "配信終了" : "中継中(自動更新)"}`;
-          if (ended) clearInterval(sess.pollTimer);
+          if (ended) return;
         } catch { /* 一時的な失敗は次回ポーリングに任せる */ }
-      }, LIVE_POLL_MS);
+        sess.pollTimer = setTimeout(poll, LIVE_POLL_MS);
+      };
+      sess.pollTimer = setTimeout(poll, LIVE_POLL_MS);
     } else {
       statusEl.textContent = `${sess.cues.length} 発言`;
     }
