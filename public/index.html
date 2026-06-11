@@ -79,6 +79,13 @@
     border-radius: 3px; padding: 0 4px; flex-shrink: 0; letter-spacing: .06em; }
   .quality:empty { display: none; }
 
+  /* サムネ(フォーカス時プレビュー)のラベルは短縮名だけに絞り、院は文字色で示す */
+  .name .nshort { display: none; }
+  #grid.focusmode .tile:not(.unmuted) :is(.nfull, .badge, .quality, .muteicon) { display: none; }
+  #grid.focusmode .tile:not(.unmuted) .nshort { display: inline; }
+  .tile.shugiin .nshort { color: var(--shu); }
+  .tile.sangiin .nshort { color: var(--san); }
+
   /* 字幕バブル: ガラス */
   .asr { position: absolute; left: 6%; right: 6%; bottom: 11%; pointer-events: none;
     display: flex; justify-content: center; }
@@ -91,9 +98,21 @@
     max-height: calc(1.35em * 3 + .6em - 4px); overflow: hidden;
     display: flex; flex-direction: column; justify-content: flex-end; }
   .asr .bubble .old { color: #a9a9a2; }
-  #grid.focusmode .tile:not(.unmuted) .bubble {
-    font-size: max(4cqw, 14px);
-    max-height: calc(1.35em * 5 + .6em - 4px);
+  /* プレビューの字幕は広いタイルでだけ5行に拡大し、極小タイルでは映像が食われるので出さない */
+  @container (min-width: 380px) {
+    #grid.focusmode .tile:not(.unmuted) .bubble {
+      font-size: max(4cqw, 14px);
+      max-height: calc(1.35em * 5 + .6em - 4px);
+    }
+  }
+  /* 極小プレビューでも字幕は消さない。最新1行だけの細帯にして映像を残す */
+  @container (max-width: 239px) {
+    #grid.focusmode .tile:not(.unmuted) .asr { left: 2%; right: 2%; bottom: 34px; }
+    #grid.focusmode .tile:not(.unmuted) .bubble {
+      width: 100%;
+      padding: .15em .45em;
+      max-height: calc(1.35em + .3em);
+    }
   }
   .pending video { opacity: .3; }
   .empty { padding: 48px; color: #6a6a72; text-align: center; letter-spacing: .1em; }
@@ -313,9 +332,29 @@ setInterval(() => {
 }, 5000);
 
 // ---- タイル ----
+// サムネ(フォーカス時のプレビュー)用に時刻なし・「〜委員会/審査会」を削った短縮名も持たせる。
+// さらに「経済産業→経産」のような定番略称に縮める
+const NAME_ABBR = {
+  経済産業: "経産", 厚生労働: "厚労", 農林水産: "農水", 国土交通: "国交",
+  文部科学: "文科", 文教科学: "文科", 財務金融: "財金", 財政金融: "財金",
+  外交防衛: "外防", 安全保障: "安保", 議院運営: "議運", 政治倫理: "政倫",
+  災害対策: "災対", 行政監視: "行監", 決算行政監視: "決算行監",
+  沖縄及び北方問題: "沖北", 北朝鮮による拉致問題等: "拉致",
+  東日本大震災復興: "震災復興", 原子力問題調査: "原子力",
+  国家基本政策: "国家基本", 政治倫理の確立及び公職選挙法改正: "倫理選挙",
+};
+function shortName(name) {
+  const s = name.replace(/(特別)?委員会$|審査会$|調査会$/, "").replace(/に関する$/, "") || name;
+  return NAME_ABBR[s] ?? s;
+}
+function setTileName(el, s) {
+  el.querySelector(".nfull").textContent = `${s.time ?? ""} ${s.name}`.trim();
+  el.querySelector(".nshort").textContent = shortName(s.name);
+}
+
 function makeTile(s) {
   const el = document.createElement("div");
-  el.className = "tile" + (s.pending ? " pending" : "");
+  el.className = `tile ${s.house}` + (s.pending ? " pending" : "");
   el.innerHTML = `
     <video muted autoplay playsinline crossorigin="anonymous"></video>
     <div class="tally">ON AIR</div>
@@ -323,11 +362,11 @@ function makeTile(s) {
     <div class="asr"></div>
     <div class="label">
       <span class="badge ${s.house}">${s.house === "shugiin" ? "衆" : "参"}</span>
-      <span class="name"></span>
+      <span class="name"><span class="nfull"></span><span class="nshort"></span></span>
       <span class="quality"></span>
       <span class="muteicon">🔇</span>
     </div>`;
-  el.querySelector(".name").textContent = `${s.time} ${s.name}`;
+  setTileName(el, s);
   const video = el.querySelector("video");
   const hls = new Hls({ capLevelToPlayerSize: false, startLevel: 0, maxBufferLength: 15, subtitleDisplay: false });
   const t = { el, video, hls, stream: s, lowest: 0, highest: 0, audio: null, hitUntil: 0 };
@@ -424,47 +463,72 @@ function relayout() {
     t.el.style.width = ""; t.el.style.justifySelf = "";
   }
   if (focusedId && tiles.has(focusedId) && n > 1) {
-    // フォーカスを大きく取る。縮小タイルはクロップが縦3:4より細くならないようセルいっぱいに
-    // 伸ばさず手前で止める。フォーカス側は16:9(ノークロップ)以上には広げない
+    // プレビューは目標サイズ(TGT)に達するまでサイドバーの列(縦長画面では段)を増やして確保し、
+    // 残りを全部メインに渡す。全タイルともクロップ許容は16:9〜3:4。
+    // メインの下限は横画面で3:4、縦長画面で16:9。プレビューはメインの2/3以下に抑える
     const others = n - 1;
     const inner = { w: W - 16, h: H - 16 }; // #grid の padding 8px ぶん
+    const TGT = 340; // プレビュー幅の目標px。これ以上大きくせずメインに返す
     if (H > W) {
-      // 縦長画面: フォーカスを上に大きく(3:4クロップまで)、下段は高さ1/5。
-      // 縮小タイルは幅を16:9で打ち止めにするので低い段でも破綻しない
-      const cellW = (inner.w - GAP * (others - 1)) / others;
-      let ho = (inner.h - GAP) / 5;
-      const hf = Math.min(inner.h - GAP - ho, inner.w * 4 / 3);
-      ho = Math.min(inner.h - GAP - hf, cellW * 4 / 3, hf * 2 / 3);
-      grid.style.gridTemplateColumns = `repeat(${others}, 1fr)`;
-      grid.style.gridTemplateRows = `${hf}px ${ho}px`;
-      grid.style.justifyContent = "";
-      grid.style.alignContent = "center";
-      tiles.get(focusedId).el.style.gridArea = `1 / 1 / 2 / ${others + 1}`;
-      let col = 1;
-      for (const [tid, t] of tiles) if (tid !== focusedId) {
-        t.el.style.gridArea = `2 / ${col++}`;
-        t.el.style.width = `${Math.min(cellW, ho * 16 / 9)}px`;
-        t.el.style.justifySelf = "center";
+      // 縦長画面: フォーカスを上に、プレビューは下段に。段数mは面積を稼げる構成を選ぶ
+      let best = null;
+      for (let m = 1; m <= 4 && m <= others; m++) {
+        const k = Math.ceil(others / m);
+        const cellW = (inner.w - GAP * (k - 1)) / k;
+        const avail = (inner.h - GAP * m - inner.w * 9 / 16) / m;
+        const ho = Math.min(avail, cellW * 4 / 3, TGT * 3 / 4, 2 * (inner.h - GAP * m) / (3 + 2 * m));
+        if (ho <= 0) continue;
+        const tw = Math.min(cellW, ho * 16 / 9);
+        if (!best || tw * ho > best.tw * best.ho * 1.05) best = { m, k, cellW, ho, tw };
+      }
+      if (best) {
+        const { m, k, cellW, ho, tw } = best;
+        const hf = Math.min(inner.h - GAP * m - m * ho, inner.w * 4 / 3);
+        grid.style.gridTemplateColumns = `repeat(${k}, ${cellW}px)`;
+        grid.style.gridTemplateRows = `${hf}px repeat(${m}, ${ho}px)`;
+        grid.style.justifyContent = "center";
+        grid.style.alignContent = "center";
+        tiles.get(focusedId).el.style.gridArea = `1 / 1 / 2 / ${k + 1}`;
+        let i = 0;
+        for (const [tid, t] of tiles) if (tid !== focusedId) {
+          t.el.style.gridArea = `${2 + Math.floor(i / k)} / ${1 + (i % k)}`;
+          t.el.style.width = `${tw}px`;
+          t.el.style.justifySelf = "center";
+          i++;
+        }
+        return;
       }
     } else {
-      // 横画面: 縮小列は幅1/5。タイル高さを3:4クロップで打ち止めにするので細くても破綻しない
-      const cellH = (inner.h - GAP * (others - 1)) / others;
-      let wo = (inner.w - GAP) / 5;
-      const wf = Math.min(inner.w - GAP - wo, inner.h * 16 / 9);
-      wo = Math.min(inner.w - GAP - wf, cellH * 16 / 9, wf * 2 / 3);
-      grid.style.gridTemplateColumns = `${wf}px ${wo}px`;
-      grid.style.gridTemplateRows = `repeat(${others}, 1fr)`;
-      grid.style.justifyContent = "center";
-      grid.style.alignContent = "";
-      tiles.get(focusedId).el.style.gridArea = `1 / 1 / ${others + 1} / 2`;
-      let row = 1;
-      for (const [tid, t] of tiles) if (tid !== focusedId) {
-        t.el.style.gridArea = `${row++} / 2`;
-        t.el.style.height = `${Math.min(cellH, wo * 4 / 3)}px`;
-        t.el.style.alignSelf = "center";
+      // 横画面: フォーカスを左に、プレビューは右のサイドバーに。列数kは面積を稼げる構成を選ぶ
+      let best = null;
+      for (let k = 1; k <= 4 && k <= others; k++) {
+        const r = Math.ceil(others / k);
+        const cellH = (inner.h - GAP * (r - 1)) / r;
+        const avail = (inner.w - GAP * k - inner.h * 3 / 4) / k;
+        const wo = Math.min(avail, cellH * 16 / 9, TGT, 2 * (inner.w - GAP * k) / (3 + 2 * k));
+        if (wo <= 0) continue;
+        const th = Math.min(cellH, wo * 4 / 3);
+        if (!best || wo * th > best.wo * best.th * 1.05) best = { k, r, cellH, wo, th };
+      }
+      if (best) {
+        const { k, r, cellH, wo, th } = best;
+        const wf = Math.min(inner.w - GAP * k - k * wo, inner.h * 16 / 9);
+        grid.style.gridTemplateColumns = `${wf}px repeat(${k}, ${wo}px)`;
+        grid.style.gridTemplateRows = `repeat(${r}, ${cellH}px)`;
+        grid.style.justifyContent = "center";
+        grid.style.alignContent = "center";
+        tiles.get(focusedId).el.style.gridArea = `1 / 1 / ${r + 1} / 2`;
+        let i = 0;
+        for (const [tid, t] of tiles) if (tid !== focusedId) {
+          t.el.style.gridArea = `${1 + Math.floor(i / k)} / ${2 + (i % k)}`;
+          t.el.style.height = `${th}px`;
+          t.el.style.alignSelf = "center";
+          i++;
+        }
+        return;
       }
     }
-    return;
+    // ここに来るのは画面が極端に小さいときのみ。通常グリッドにフォールバック
   }
   let best = { cols: 1, area: 0, w: 0, h: 0 };
   for (let cols = 1; cols <= n; cols++) {
@@ -519,7 +583,7 @@ async function refresh() {
       if (!t) { makeTile(s); continue; }
       // 既存タイルの表示情報を更新(プローブ仮名→正式名、開会待ち解除など)
       t.stream = s;
-      t.el.querySelector(".name").textContent = `${s.time ?? ""} ${s.name}`.trim();
+      setTileName(t.el, s);
       t.el.classList.toggle("pending", !!s.pending);
     }
     relayout();
