@@ -25,19 +25,25 @@ http
       if (url.pathname === "/streams.json" || url.pathname === "/api/streams") {
         res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
         // ?demo=1: UI確認用ダミー(公開テストHLS)。審議がない時間帯のUI開発に使う
-        // ?demo=N (N=2〜5) で先頭N本に絞れる(2放送時レイアウト等の確認用)
+        // ?demo=N (N=2〜18) で本数を指定できる(多数放送時レイアウト等の確認用。6本以上は巡回生成)
         if (url.searchParams.get("demo")) {
-          const count = parseInt(url.searchParams.get("demo"), 10);
-          const demo = [
-            ["shugiin", "demo1", "予算委員会(ダミー)", "9:00"],
-            ["shugiin", "demo2", "法務委員会(ダミー)", "9:00"],
-            ["sangiin", "demo3", "厚生労働委員会(ダミー)", "10:00"],
-            ["sangiin", "demo4", "内閣委員会(ダミー)", "10:00"],
-            ["shugiin", "demo5", "本会議(ダミー)", "13:00"],
-          ].slice(0, count >= 2 ? count : 5).map(([house, id, name, time]) => ({
-            house, id, name, time,
-            m3u8: "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
-          }));
+          const want = parseInt(url.searchParams.get("demo"), 10);
+          const count = want >= 2 ? Math.min(want, 18) : 5;
+          const base = [
+            ["shugiin", "予算委員会(ダミー)", "9:00"],
+            ["shugiin", "法務委員会(ダミー)", "9:00"],
+            ["sangiin", "厚生労働委員会(ダミー)", "10:00"],
+            ["sangiin", "内閣委員会(ダミー)", "10:00"],
+            ["shugiin", "本会議(ダミー)", "13:00"],
+          ];
+          const demo = Array.from({ length: count }, (_, i) => {
+            const [house, name, time] = base[i % base.length];
+            return {
+              house, id: `demo${i + 1}`, time,
+              name: i < base.length ? name : `${name}${i + 1}`,
+              m3u8: "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+            };
+          });
           res.end(JSON.stringify({ updatedAt: new Date().toISOString(), streams: demo, errors: [] }));
           return;
         }
