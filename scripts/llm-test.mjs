@@ -68,8 +68,8 @@ const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
   headers: { Authorization: `Bearer ${KEY}`, "Content-Type": "application/json" },
   body: JSON.stringify(payload),
 });
-const ms = Date.now() - t0;
 const json = await res.json();
+const ms = Date.now() - t0; // ヘッダ到達ではなく本文受信完了までの実時間
 if (!res.ok) { console.error("HTTP", res.status, JSON.stringify(json)); process.exit(1); }
 
 const out = json.choices?.[0]?.message?.content ?? "";
