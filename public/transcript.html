@@ -430,7 +430,10 @@ async function callChunk(cues, start, end, c) {
     messages: [{ role: "system", content: SUM_SYSTEM }, { role: "user", content: body }],
     temperature: 0.2,
   };
-  if (c.provider) payload.provider = { order: c.provider.split(",").map((s) => s.trim()).filter(Boolean), allow_fallbacks: true };
+  if (c.provider) {
+    const order = c.provider.split(",").map((s) => s.trim()).filter(Boolean);
+    if (order.length) payload.provider = { order, allow_fallbacks: true };
+  }
   if (c.model.includes("gpt-oss")) payload.reasoning = { effort: REASONING };
   const res = await fetchOk("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
@@ -441,8 +444,12 @@ async function callChunk(cues, start, end, c) {
   const text = j.choices?.[0]?.message?.content ?? "";
   const s = text.indexOf("{"), e = text.lastIndexOf("}");
   if (s < 0 || e < 0) return { qa: [], turns: [] };
-  try { const p = JSON.parse(text.slice(s, e + 1)); return { qa: p.qa || [], turns: p.turns || [] }; }
-  catch { return { qa: [], turns: [] }; }
+  try {
+    const p = JSON.parse(text.slice(s, e + 1));
+    // LLMが i を文字列で返すことがあるので整数化し、無効なものは除外
+    const norm = (arr) => (Array.isArray(arr) ? arr : []).map((o) => ({ ...o, i: parseInt(o.i, 10) })).filter((o) => Number.isInteger(o.i));
+    return { qa: norm(p.qa), turns: norm(p.turns) };
+  } catch { return { qa: [], turns: [] }; }
 }
 
 // チャンク結果を統合: turn重複除去 + 境界で分断された同一質問者の質疑を結合
@@ -509,7 +516,7 @@ function renderSummary(sess, cues, data) {
     const who = q.kind === "手続き" ? "議事手続き" : (q.questioner || "質疑");
     head.innerHTML = `<span class="who">${esc(who)}</span> — ${esc(q.gist || "")}`;
     sec.appendChild(head);
-    const pts = q.points && q.points.length ? q.points : (q.summary ? [q.summary] : []); // 旧キャッシュ互換
+    const pts = Array.isArray(q.points) ? q.points : (typeof q.points === "string" ? [q.points] : (q.summary ? [q.summary] : [])); // 旧キャッシュ・型ブレ互換
     if (pts.length) { const ul = document.createElement("ul"); ul.className = "qa-points"; for (const p of pts) { const li = document.createElement("li"); li.textContent = p; ul.appendChild(li); } sec.appendChild(ul); }
     // 発言(ターン/原文)は折りたたみ
     const lo = k === 0 ? 0 : q.i, hi = k + 1 < qa.length ? qa[k + 1].i : cues.length; // 先頭qa前の発言も取りこぼさない

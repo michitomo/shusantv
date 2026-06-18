@@ -35,7 +35,10 @@ async function callChunk(ch) {
     messages: [{ role: "system", content: SYSTEM }, { role: "user", content: ch.body }],
     temperature: 0.2,
   };
-  if (process.env.PROVIDER) payload.provider = { order: process.env.PROVIDER.split(","), allow_fallbacks: false };
+  if (process.env.PROVIDER) {
+    const order = process.env.PROVIDER.split(",").map((s) => s.trim()).filter(Boolean);
+    if (order.length) payload.provider = { order, allow_fallbacks: false };
+  }
   if (process.env.REASONING) payload.reasoning = { effort: process.env.REASONING };
   const t = Date.now();
   const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {

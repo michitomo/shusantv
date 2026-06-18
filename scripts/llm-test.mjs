@@ -74,7 +74,8 @@ const payload = {
 };
 // PROVIDER=deepinfra など指定で特定プロバイダに固定(フォールバック無効)
 if (process.env.PROVIDER) {
-  payload.provider = { order: process.env.PROVIDER.split(","), allow_fallbacks: false };
+  const order = process.env.PROVIDER.split(",").map((s) => s.trim()).filter(Boolean);
+  if (order.length) payload.provider = { order, allow_fallbacks: false };
 }
 // REASONING=low|medium|high で推論量を制御(不要な思考トークン=出力コスト削減)
 if (process.env.REASONING) payload.reasoning = { effort: process.env.REASONING };
