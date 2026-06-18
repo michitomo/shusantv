@@ -52,15 +52,17 @@
 
   /* ---- AI要約ビュー ---- */
   #summary { max-width: 860px; margin: 0 auto; padding: 16px 16px 80px; }
-  .qa { margin: 0 0 10px; }
-  .qa > summary { font-size: 15px; font-weight: 800; padding: 9px 12px; cursor: pointer; list-style: none;
+  .qa { margin: 0 0 16px; }
+  .qa-head { font-size: 15px; font-weight: 800; padding: 9px 12px;
     border-left: 3px solid var(--san); background: rgba(213,122,165,.08); border-radius: 0 8px 8px 0; }
-  .qa > summary::-webkit-details-marker { display: none; }
-  .qa > summary::before { content: "▸"; color: var(--san); margin-right: 8px; }
-  .qa[open] > summary::before { content: "▾"; }
-  .qa > summary .who { color: var(--san); }
-  .qa-points { margin: 8px 0 12px; padding: 0 12px 0 32px; color: #c7c7cf; font-size: 13px; line-height: 1.7; }
+  .qa-head .who { color: var(--san); }
+  .qa-points { margin: 8px 0 6px; padding: 0 12px 0 30px; color: #c7c7cf; font-size: 13px; line-height: 1.7; }
   .qa-points li { margin: 3px 0; }
+  .qa-turns { margin: 2px 0 0 12px; }
+  .qa-turns > summary { cursor: pointer; color: #6a6a72; font-size: 11px; letter-spacing: .06em; list-style: none; padding: 2px 0; }
+  .qa-turns > summary::-webkit-details-marker { display: none; }
+  .qa-turns > summary::before { content: "▸ 発言"; }
+  .qa-turns[open] > summary::before { content: "▾ 発言"; }
   .turn { margin: 0 0 8px 12px; padding: 8px 12px; border-radius: 8px; background: rgba(255,255,255,.03); }
   .turn-head { font-size: 13px; font-weight: 700; color: #eee; }
   .turn-head .sp { color: #7da7c7; }
@@ -501,15 +503,23 @@ function renderSummary(sess, cues, data) {
   const nextTurnI = (idx) => { for (const t of turns) if (t.i > idx) return t.i; return cues.length; };
   const inRange = (lo, hi) => turns.filter((t) => t.i >= lo && t.i < hi);
   qa.forEach((q, k) => {
-    const sec = document.createElement("details"); sec.className = "qa"; // 既定で折りたたみ
-    const head = document.createElement("summary");
+    const sec = document.createElement("section"); sec.className = "qa";
+    // 見出しと箇条書き要旨は常時表示
+    const head = document.createElement("div"); head.className = "qa-head";
     const who = q.kind === "手続き" ? "議事手続き" : (q.questioner || "質疑");
     head.innerHTML = `<span class="who">${esc(who)}</span> — ${esc(q.gist || "")}`;
     sec.appendChild(head);
     const pts = q.points && q.points.length ? q.points : (q.summary ? [q.summary] : []); // 旧キャッシュ互換
     if (pts.length) { const ul = document.createElement("ul"); ul.className = "qa-points"; for (const p of pts) { const li = document.createElement("li"); li.textContent = p; ul.appendChild(li); } sec.appendChild(ul); }
+    // 発言(ターン/原文)は折りたたみ
     const lo = k === 0 ? 0 : q.i, hi = k + 1 < qa.length ? qa[k + 1].i : cues.length; // 先頭qa前の発言も取りこぼさない
-    for (const t of inRange(lo, hi)) sec.appendChild(turnEl(sess, cues, t, nextTurnI(t.i)));
+    const ts = inRange(lo, hi);
+    if (ts.length) {
+      const det = document.createElement("details"); det.className = "qa-turns";
+      const sm = document.createElement("summary"); sm.textContent = ` ${ts.length}件`; det.appendChild(sm);
+      for (const t of ts) det.appendChild(turnEl(sess, cues, t, nextTurnI(t.i)));
+      sec.appendChild(det);
+    }
     root.appendChild(sec);
   });
   showView("summary");
