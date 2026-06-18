@@ -50,6 +50,42 @@
   #message { padding: 48px; color: #6a6a72; text-align: center; letter-spacing: .1em; font-size: 13px; }
   #message.error { color: #c97a7a; }
 
+  /* ---- AI要約ビュー ---- */
+  #summary { max-width: 860px; margin: 0 auto; padding: 16px 16px 80px; }
+  .qa { margin: 0 0 26px; }
+  .qa > h2 { font-size: 15px; font-weight: 800; margin: 0 0 6px; padding: 8px 12px;
+    border-left: 3px solid var(--san); background: rgba(213,122,165,.08); border-radius: 0 8px 8px 0; }
+  .qa > h2 .who { color: var(--san); }
+  .qa-sum { margin: 0 0 12px; padding: 0 12px; color: #c7c7cf; font-size: 13px; line-height: 1.75; }
+  .turn { margin: 0 0 8px 12px; padding: 8px 12px; border-radius: 8px; background: rgba(255,255,255,.03); }
+  .turn-head { font-size: 13px; font-weight: 700; color: #eee; }
+  .turn-head .sp { color: #7da7c7; }
+  .turn-head .gist { color: #9a9aa2; font-weight: 400; margin-left: 8px; }
+  .turn-sum { font-size: 13.5px; line-height: 1.7; margin: 4px 0 0; color: #d8d8de; }
+  .turn details { margin-top: 6px; }
+  .turn details > summary { cursor: pointer; color: #6a6a72; font-size: 11px; letter-spacing: .08em; list-style: none; }
+  .turn details > summary::-webkit-details-marker { display: none; }
+  .turn details > summary::before { content: "▸ 原文"; }
+  .turn details[open] > summary::before { content: "▾ 原文"; }
+  .turn .raw-body { margin-top: 6px; padding-left: 10px; border-left: 1px solid var(--glass-border); }
+  .turn .raw-body .rl { display: flex; gap: 10px; line-height: 1.6; }
+  .turn .raw-body .rl .rt { flex-shrink: 0; width: 64px; text-align: right; color: #5d7e96; font-size: 11px;
+    font-variant-numeric: tabular-nums; }
+  .turn .raw-body .rl .rx { font-size: 13px; color: #b8b8c0; }
+
+  /* ---- 設定パネル ---- */
+  #settings { position: fixed; top: 52px; right: 16px; z-index: 10; width: 300px; max-width: calc(100vw - 32px);
+    background: rgba(20,20,26,.96); border: 1px solid var(--glass-border); border-radius: 12px; padding: 14px;
+    backdrop-filter: blur(14px); box-shadow: 0 10px 40px rgba(0,0,0,.5); display: none; }
+  #settings.open { display: block; }
+  #settings h3 { margin: 0 0 8px; font-size: 12px; letter-spacing: .08em; color: #9a9aa2; }
+  #settings label { display: block; font-size: 11px; color: #9a9aa2; margin: 8px 0 3px; }
+  #settings input, #settings select { width: 100%; box-sizing: border-box; border-radius: 8px; }
+  #settings .row { display: flex; gap: 8px; margin-top: 12px; }
+  #settings .hint { font-size: 10.5px; color: #6a6a72; line-height: 1.6; margin-top: 8px; }
+  #settings .hint a { color: #7da7c7; }
+  .sumbar { font-size: 11px; color: #9a9aa2; }
+
   footer { position: fixed; left: 0; right: 0; bottom: 0; padding: 6px 16px;
     background: var(--glass); backdrop-filter: blur(14px); border-top: 1px solid var(--glass-border);
     color: #6a6a72; font-size: 10px; text-align: center; }
@@ -62,11 +98,32 @@
   <select id="meeting"><option value="">読み込み中…</option></select>
   <input id="filter" type="search" placeholder="絞り込み (議員名・キーワード)">
   <label class="follow"><input type="checkbox" id="follow" checked> 最新に追尾</label>
+  <button id="aiBtn" disabled>AI要約</button>
+  <button id="viewToggle" hidden>原文</button>
   <button id="dlTxt" disabled>TXT</button>
   <button id="dlVtt" disabled>VTT</button>
+  <button id="gear" title="AI要約の設定">⚙</button>
   <span class="status" id="status"></span>
 </header>
+<div id="settings">
+  <h3>AI要約の設定 (BYOK)</h3>
+  <label for="setKey">OpenRouter APIキー</label>
+  <input id="setKey" type="password" placeholder="sk-or-...">
+  <label for="setModel">モデル</label>
+  <select id="setModel">
+    <option value="openai/gpt-oss-120b">openai/gpt-oss-120b (推奨)</option>
+    <option value="google/gemma-4-31b-it">google/gemma-4-31b-it</option>
+  </select>
+  <label for="setProvider">プロバイダ (任意・カンマ区切り)</label>
+  <input id="setProvider" type="text" placeholder="cerebras">
+  <div class="row">
+    <button id="setSave">保存</button>
+    <button id="setClear">キーを削除</button>
+  </div>
+  <div class="hint">キーは<b>この端末のブラウザ内(localStorage)のみ</b>に保存され、要約はあなたのブラウザから直接OpenRouterへ送られます。本文は書き換えません。<a href="https://openrouter.ai/keys" target="_blank" rel="noopener">キーの取得</a></div>
+</div>
 <div id="transcript"><div id="message">会議を選択してください</div></div>
+<div id="summary" hidden></div>
 <footer>
   字幕は<a href="https://www.webtv.sangiin.go.jp/webtv/" target="_blank" rel="noopener">参議院インターネット審議中継</a>の音声自動認識によるもので誤変換を含みます。正式な記録は会議録を参照。字幕付き映像・字幕の転載は禁止されています(本ページは個人用ビューアです)
 </footer>
@@ -318,12 +375,179 @@ $("dlVtt").onclick = () => {
   download(`${today()}_${session.entry.name}.vtt`, "text/vtt;charset=utf-8", body);
 };
 
+// ---- AI要約 (BYOK / OpenRouter) ----
+// キーはユーザー端末のlocalStorageのみ。要約はブラウザから直接OpenRouterへ。本文は書き換えない。
+const CFG_KEY = "shusantv.aicfg";
+const SUMMARY_CHUNK = 180;  // 1チャンクのcue数
+const SUMMARY_CONC = 6;     // 並列数(429回避のため控えめ)
+const REASONING = "medium"; // qaの網羅にはmedium
+
+const SUM_SYSTEM = `あなたは国会審議の自動字幕(誤変換あり)を、2階層で要約するアシスタントです。
+本文は書き換えません。次の2階層に分けて要約し、JSONだけを返します(コードブロック不要):
+{ "qa": [{"i": <質疑開始index>, "kind": "<質疑|手続き>", "questioner": "<質問者名/null>", "gist": "<30字以内>", "summary": "<3〜5文>"}],
+  "turns": [{"i": <発言開始index>, "sp": "<発言者>", "gist": "<25字以内>", "summary": "<2〜4文>"}] }
+- qa: 1人の質問者(委員長に「○○くん」と指名される議員)が始めてから次の質問者に交代するまで(答弁者交代は内包)。開会等はkind="手続き"・questioner=null。
+- turns: qa内の発言者交代ごと。同一発言者の連続は1つに。
+- gistは簡潔、summaryは中立。原文の逐語転記はしない。`;
+
+const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+
+function cfg() {
+  let c = {};
+  try { c = JSON.parse(localStorage.getItem(CFG_KEY) || "{}"); } catch { /* 破損は無視 */ }
+  return { key: c.key || "", model: c.model || "openai/gpt-oss-120b", provider: c.provider || "cerebras" };
+}
+function refreshAiBtn() { $("aiBtn").disabled = !(cfg().key && session && session.cues.length); }
+
+$("gear").onclick = () => {
+  const c = cfg();
+  $("setKey").value = c.key; $("setModel").value = c.model; $("setProvider").value = c.provider;
+  $("settings").classList.toggle("open");
+};
+$("setSave").onclick = () => {
+  localStorage.setItem(CFG_KEY, JSON.stringify({
+    key: $("setKey").value.trim(), model: $("setModel").value, provider: $("setProvider").value.trim(),
+  }));
+  $("settings").classList.remove("open");
+  refreshAiBtn();
+};
+$("setClear").onclick = () => {
+  const c = cfg(); localStorage.setItem(CFG_KEY, JSON.stringify({ ...c, key: "" }));
+  $("setKey").value = ""; refreshAiBtn();
+};
+
+async function callChunk(cues, start, end, c) {
+  const body = cues.slice(start, end).map((cu, j) => `[${start + j}] ${cu.text}`).join("\n");
+  const payload = {
+    model: c.model,
+    messages: [{ role: "system", content: SUM_SYSTEM }, { role: "user", content: body }],
+    temperature: 0.2,
+  };
+  if (c.provider) payload.provider = { order: c.provider.split(",").map((s) => s.trim()).filter(Boolean), allow_fallbacks: true };
+  if (c.model.includes("gpt-oss")) payload.reasoning = { effort: REASONING };
+  const res = await fetchOk("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${c.key}`, "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const j = await res.json();
+  const text = j.choices?.[0]?.message?.content ?? "";
+  const s = text.indexOf("{"), e = text.lastIndexOf("}");
+  if (s < 0 || e < 0) return { qa: [], turns: [] };
+  try { const p = JSON.parse(text.slice(s, e + 1)); return { qa: p.qa || [], turns: p.turns || [] }; }
+  catch { return { qa: [], turns: [] }; }
+}
+
+// チャンク結果を統合: turn重複除去 + 境界で分断された同一質問者の質疑を結合
+function stitch(parts) {
+  const qa = [], turns = [];
+  for (const p of parts) { qa.push(...p.qa); turns.push(...p.turns); }
+  qa.sort((a, b) => a.i - b.i); turns.sort((a, b) => a.i - b.i);
+  const seen = new Set(), tdedup = [];
+  for (const t of turns) { if (seen.has(t.i)) continue; seen.add(t.i); tdedup.push(t); }
+  const qm = [];
+  for (const q of qa) {
+    const last = qm[qm.length - 1];
+    if (last && q.kind === "質疑" && last.kind === "質疑" && q.questioner && q.questioner === last.questioner) continue;
+    qm.push(q);
+  }
+  return { qa: qm, turns: tdedup };
+}
+
+async function summarize() {
+  const sess = session;
+  const c = cfg();
+  if (!c.key) { $("settings").classList.add("open"); return; }
+  if (!sess || !sess.cues.length) return;
+  const cues = [...sess.cues].sort((a, b) => a.t - b.t);
+  const cacheKey = `shusantv.sum.${sess.entry.id}.${cues.length}`;
+  let data = null;
+  try { const hit = localStorage.getItem(cacheKey); if (hit) data = JSON.parse(hit); } catch { /* 無視 */ }
+  if (!data) {
+    $("aiBtn").disabled = true;
+    const ranges = [];
+    for (let i = 0; i < cues.length; i += SUMMARY_CHUNK) ranges.push([i, Math.min(i + SUMMARY_CHUNK, cues.length)]);
+    const parts = new Array(ranges.length);
+    let next = 0, done = 0, failed = 0;
+    statusEl.textContent = `要約中 0/${ranges.length}`;
+    await Promise.all(Array.from({ length: Math.min(SUMMARY_CONC, ranges.length) }, async () => {
+      while (next < ranges.length) {
+        const k = next++;
+        try { parts[k] = await callChunk(cues, ranges[k][0], ranges[k][1], c); }
+        catch { parts[k] = { qa: [], turns: [] }; failed++; }
+        if (sess !== session) return;
+        statusEl.textContent = `要約中 ${++done}/${ranges.length}`;
+      }
+    }));
+    if (sess !== session) return; // 会議が切り替わっていたら破棄
+    data = stitch(parts.filter(Boolean));
+    statusEl.textContent = failed ? `要約完了 (一部失敗 ${failed})` : "要約完了";
+    try { localStorage.setItem(cacheKey, JSON.stringify(data)); } catch { /* 容量超過は無視 */ }
+  }
+  renderSummary(sess, cues, data);
+  refreshAiBtn();
+}
+
+function renderSummary(sess, cues, data) {
+  const root = $("summary");
+  root.innerHTML = "";
+  const { qa, turns } = data;
+  if (!qa.length && !turns.length) { root.innerHTML = '<div id="message">要約を生成できませんでした</div>'; showView("summary"); return; }
+  const nextTurnI = (idx) => { for (const t of turns) if (t.i > idx) return t.i; return cues.length; };
+  const inRange = (lo, hi) => turns.filter((t) => t.i >= lo && t.i < hi);
+  qa.forEach((q, k) => {
+    const sec = document.createElement("section"); sec.className = "qa";
+    const h = document.createElement("h2");
+    const who = q.kind === "手続き" ? "議事手続き" : (q.questioner || "質疑");
+    h.innerHTML = `<span class="who">${esc(who)}</span> — ${esc(q.gist || "")}`;
+    sec.appendChild(h);
+    if (q.summary) { const p = document.createElement("p"); p.className = "qa-sum"; p.textContent = q.summary; sec.appendChild(p); }
+    const lo = k === 0 ? 0 : q.i, hi = k + 1 < qa.length ? qa[k + 1].i : cues.length; // 先頭qa前の発言も取りこぼさない
+    for (const t of inRange(lo, hi)) sec.appendChild(turnEl(sess, cues, t, nextTurnI(t.i)));
+    root.appendChild(sec);
+  });
+  showView("summary");
+}
+
+function turnEl(sess, cues, t, end) {
+  const d = document.createElement("div"); d.className = "turn";
+  const head = document.createElement("div"); head.className = "turn-head";
+  head.innerHTML = `<span class="sp">${esc(t.sp || "")}</span><span class="gist">${esc(t.gist || "")}</span>`;
+  d.appendChild(head);
+  if (t.summary) { const s = document.createElement("div"); s.className = "turn-sum"; s.textContent = t.summary; d.appendChild(s); }
+  const det = document.createElement("details");
+  det.appendChild(document.createElement("summary"));
+  const rb = document.createElement("div"); rb.className = "raw-body";
+  for (let i = Math.max(0, t.i); i < Math.min(cues.length, end); i++) {
+    const cu = cues[i];
+    const rl = document.createElement("div"); rl.className = "rl";
+    const rt = document.createElement("span"); rt.className = "rt"; rt.textContent = sess.fmtTime(cu.t);
+    const rx = document.createElement("span"); rx.className = "rx"; rx.textContent = cu.text;
+    rl.append(rt, rx); rb.appendChild(rl);
+  }
+  det.appendChild(rb); d.appendChild(det);
+  return d;
+}
+
+function showView(which) {
+  const sum = which === "summary";
+  $("summary").hidden = !sum;
+  $("transcript").hidden = sum;
+  $("viewToggle").hidden = false;
+  $("viewToggle").textContent = sum ? "原文" : "要約";
+}
+$("viewToggle").onclick = () => showView($("summary").hidden ? "summary" : "transcript");
+$("aiBtn").onclick = summarize;
+
 // ---- 会議の選択と読み込み ----
 async function openMeeting(entry) {
   session?.stop();
   const sess = (session = new TranscriptSession(entry));
   showMessage("字幕トラックを解決中…");
+  // ビューを原文に戻し、前会議の要約をクリア
+  $("summary").innerHTML = ""; $("summary").hidden = true; $("transcript").hidden = false; $("viewToggle").hidden = true;
   $("dlTxt").disabled = $("dlVtt").disabled = true;
+  $("aiBtn").disabled = true;
   try {
     await Promise.all([sess.resolveSubsUrl(), sess.loadChannelInfo()]);
     if (!sess.alive) return;
@@ -333,6 +557,7 @@ async function openMeeting(entry) {
     let ended = await sess.pull(progress);
     if (!sess.alive) return;
     $("dlTxt").disabled = $("dlVtt").disabled = false;
+    refreshAiBtn();
     if (!sess.cues.length) showMessage(ended ? "字幕がありません" : "まだ字幕がありません(発言が始まると表示されます)");
     if (entry.live && !ended) {
       statusEl.textContent = `${sess.cues.length} 発言 — 中継中(自動更新)`;
