@@ -52,11 +52,15 @@
 
   /* ---- AI要約ビュー ---- */
   #summary { max-width: 860px; margin: 0 auto; padding: 16px 16px 80px; }
-  .qa { margin: 0 0 26px; }
-  .qa > h2 { font-size: 15px; font-weight: 800; margin: 0 0 6px; padding: 8px 12px;
+  .qa { margin: 0 0 10px; }
+  .qa > summary { font-size: 15px; font-weight: 800; padding: 9px 12px; cursor: pointer; list-style: none;
     border-left: 3px solid var(--san); background: rgba(213,122,165,.08); border-radius: 0 8px 8px 0; }
-  .qa > h2 .who { color: var(--san); }
-  .qa-sum { margin: 0 0 12px; padding: 0 12px; color: #c7c7cf; font-size: 13px; line-height: 1.75; }
+  .qa > summary::-webkit-details-marker { display: none; }
+  .qa > summary::before { content: "▸"; color: var(--san); margin-right: 8px; }
+  .qa[open] > summary::before { content: "▾"; }
+  .qa > summary .who { color: var(--san); }
+  .qa-points { margin: 8px 0 12px; padding: 0 12px 0 32px; color: #c7c7cf; font-size: 13px; line-height: 1.7; }
+  .qa-points li { margin: 3px 0; }
   .turn { margin: 0 0 8px 12px; padding: 8px 12px; border-radius: 8px; background: rgba(255,255,255,.03); }
   .turn-head { font-size: 13px; font-weight: 700; color: #eee; }
   .turn-head .sp { color: #7da7c7; }
@@ -384,11 +388,12 @@ const REASONING = "medium"; // qaの網羅にはmedium
 
 const SUM_SYSTEM = `あなたは国会審議の自動字幕(誤変換あり)を、2階層で要約するアシスタントです。
 本文は書き換えません。次の2階層に分けて要約し、JSONだけを返します(コードブロック不要):
-{ "qa": [{"i": <質疑開始index>, "kind": "<質疑|手続き>", "questioner": "<質問者名/null>", "gist": "<30字以内>", "summary": "<3〜5文>"}],
+{ "qa": [{"i": <質疑開始index>, "kind": "<質疑|手続き>", "questioner": "<質問者名/null>", "gist": "<30字以内の見出し>", "points": ["<質疑全体の要旨。1〜3個の箇条書き。各40字以内>"]}],
   "turns": [{"i": <発言開始index>, "sp": "<発言者>", "gist": "<25字以内>", "summary": "<2〜4文>"}] }
 - qa: 1人の質問者(委員長に「○○くん」と指名される議員)が始めてから次の質問者に交代するまで(答弁者交代は内包)。開会等はkind="手続き"・questioner=null。
+- qa.points: その質疑全体の要点を1〜3個の箇条書きで。多くても3個まで。冗長にしない。
 - turns: qa内の発言者交代ごと。同一発言者の連続は1つに。
-- gistは簡潔、summaryは中立。原文の逐語転記はしない。`;
+- gistは簡潔、要旨・要約は中立。原文の逐語転記はしない。`;
 
 const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 
@@ -496,12 +501,13 @@ function renderSummary(sess, cues, data) {
   const nextTurnI = (idx) => { for (const t of turns) if (t.i > idx) return t.i; return cues.length; };
   const inRange = (lo, hi) => turns.filter((t) => t.i >= lo && t.i < hi);
   qa.forEach((q, k) => {
-    const sec = document.createElement("section"); sec.className = "qa";
-    const h = document.createElement("h2");
+    const sec = document.createElement("details"); sec.className = "qa"; // 既定で折りたたみ
+    const head = document.createElement("summary");
     const who = q.kind === "手続き" ? "議事手続き" : (q.questioner || "質疑");
-    h.innerHTML = `<span class="who">${esc(who)}</span> — ${esc(q.gist || "")}`;
-    sec.appendChild(h);
-    if (q.summary) { const p = document.createElement("p"); p.className = "qa-sum"; p.textContent = q.summary; sec.appendChild(p); }
+    head.innerHTML = `<span class="who">${esc(who)}</span> — ${esc(q.gist || "")}`;
+    sec.appendChild(head);
+    const pts = q.points && q.points.length ? q.points : (q.summary ? [q.summary] : []); // 旧キャッシュ互換
+    if (pts.length) { const ul = document.createElement("ul"); ul.className = "qa-points"; for (const p of pts) { const li = document.createElement("li"); li.textContent = p; ul.appendChild(li); } sec.appendChild(ul); }
     const lo = k === 0 ? 0 : q.i, hi = k + 1 < qa.length ? qa[k + 1].i : cues.length; // 先頭qa前の発言も取りこぼさない
     for (const t of inRange(lo, hi)) sec.appendChild(turnEl(sess, cues, t, nextTurnI(t.i)));
     root.appendChild(sec);
