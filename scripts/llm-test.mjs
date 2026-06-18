@@ -52,21 +52,28 @@ const SYSTEM = {
 const system = SYSTEM[mode];
 
 const t0 = Date.now();
+const payload = {
+  model,
+  messages: [{ role: "system", content: system }, { role: "user", content: body }],
+  temperature: 0.2,
+};
+// PROVIDER=deepinfra など指定で特定プロバイダに固定(フォールバック無効)
+if (process.env.PROVIDER) {
+  payload.provider = { order: process.env.PROVIDER.split(","), allow_fallbacks: false };
+}
+// REASONING=low|medium|high で推論量を制御(不要な思考トークン=出力コスト削減)
+if (process.env.REASONING) payload.reasoning = { effort: process.env.REASONING };
 const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
   method: "POST",
   headers: { Authorization: `Bearer ${KEY}`, "Content-Type": "application/json" },
-  body: JSON.stringify({
-    model,
-    messages: [{ role: "system", content: system }, { role: "user", content: body }],
-    temperature: 0.2,
-  }),
+  body: JSON.stringify(payload),
 });
 const ms = Date.now() - t0;
 const json = await res.json();
 if (!res.ok) { console.error("HTTP", res.status, JSON.stringify(json)); process.exit(1); }
 
 const out = json.choices?.[0]?.message?.content ?? "";
-console.log(`=== model: ${model} | cues: ${slice.length} | ${ms}ms ===`);
+console.log(`=== model: ${model} | provider: ${json.provider || process.env.PROVIDER || "auto"} | cues: ${slice.length} | ${ms}ms ===`);
 console.log("usage:", JSON.stringify(json.usage));
 console.log("--- output ---");
 console.log(out);
