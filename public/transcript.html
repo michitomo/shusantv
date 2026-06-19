@@ -616,12 +616,13 @@ function renderSummary(sess, cues, data) {
 
 // 役割(質問/答弁)を発言者名と質問者名から推定(LLM出力を増やさずクライアント側で導出)
 function turnRole(sp, questioner) {
-  const norm = (s) => (s || "").replace(/\s|くん|君|さん/g, "");
+  const norm = (s) => (s || "").replace(/\s|くん|君|さん|[（）()]/g, "");
   const x = norm(sp);
   if (!x || x.includes("委員長") || x.includes("会長")) return ""; // 進行(中立)
+  // 同姓の閣僚答弁を質問と誤判定しないよう、役職パターンを先に判定
+  if (/大臣|参考人|長官|次官|審議官|局長|部長|課長|政府|参与|総裁|公述人|政務官|総理/.test(x)) return "答弁";
   const q = norm(questioner);
   if (q && (x.includes(q) || q.includes(x))) return "質問";
-  if (/大臣|参考人|長官|次官|審議官|局長|部長|課長|政府|参与|総裁|公述人/.test(x)) return "答弁";
   return q ? "質問" : "";
 }
 
