@@ -167,19 +167,18 @@ async function fetchOk(url, opts) {
 // 再オープン時はネットワーク無しで返せる(VODは全ヒット、ライブは新規分のみ取得)。
 const SEG_CACHE = "shusantv-vtt-v1";
 async function fetchSegmentText(url, stats) {
-  if (typeof caches === "undefined") { if (stats) stats.miss++; return (await fetchOk(url)).text(); }
-  try {
-    const cache = await caches.open(SEG_CACHE);
-    const hit = await cache.match(url);
-    if (hit) { if (stats) stats.hit++; return hit.text(); }
-    if (stats) stats.miss++;
-    const text = await (await fetchOk(url)).text();
-    cache.put(url, new Response(text, { headers: { "Content-Type": "text/vtt" } })).catch(() => {});
-    return text;
-  } catch {
-    if (stats) stats.miss++;
-    return (await fetchOk(url)).text();
+  let cache;
+  if (typeof caches !== "undefined") {
+    try {
+      cache = await caches.open(SEG_CACHE);
+      const hit = await cache.match(url);
+      if (hit) { if (stats) stats.hit++; return hit.text(); }
+    } catch { /* キャッシュ不可ならネットワークにフォールバック */ }
   }
+  if (stats) stats.miss++;
+  const text = await (await fetchOk(url)).text(); // 失敗時は呼び出し側(pull)の.catchに委ねる(二重fetchしない)
+  if (cache) cache.put(url, new Response(text, { headers: { "Content-Type": "text/vtt" } })).catch(() => {});
+  return text;
 }
 
 // ---- m3u8 / VTT パース ----
