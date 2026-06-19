@@ -50,40 +50,42 @@
   #message { padding: 48px; color: #6a6a72; text-align: center; letter-spacing: .1em; font-size: 13px; }
   #message.error { color: #c97a7a; }
 
-  /* ---- AI要約ビュー ---- */
-  #summary { max-width: 860px; margin: 0 auto; padding: 16px 16px 80px; }
-  .qa { margin: 0 0 16px; }
-  .qa-head { font-size: 15px; font-weight: 800; padding: 9px 12px;
-    border-left: 3px solid var(--san); background: rgba(213,122,165,.08); border-radius: 0 8px 8px 0; }
-  .qa-head .who { color: var(--san); }
-  .qa-points { margin: 8px 0 6px; padding: 0 12px 0 30px; color: #c7c7cf; font-size: 13px; line-height: 1.7; }
-  .qa-points li { margin: 3px 0; }
-  .qa-turns { margin: 2px 0 0 12px; }
-  .qa-turns > summary { cursor: pointer; color: #6a6a72; font-size: 11px; letter-spacing: .06em; list-style: none; padding: 2px 0; }
-  .qa-turns > summary::-webkit-details-marker { display: none; }
-  .qa-turns > summary::before { content: "▸ 発言"; }
-  .qa-turns[open] > summary::before { content: "▾ 発言"; }
-  .turn { margin: 0 0 8px 12px; padding: 8px 12px; border-radius: 8px; background: rgba(255,255,255,.03); }
-  .turn-head { font-size: 13px; font-weight: 700; color: #eee; }
-  .turn-head .sp { color: #7da7c7; }
-  .turn-head .gist { color: #9a9aa2; font-weight: 400; margin-left: 8px; }
-  .role-badge { display: inline-block; font-size: 10px; font-weight: 800; line-height: 1.5; padding: 0 7px;
-    border-radius: 999px; margin-right: 8px; vertical-align: middle; letter-spacing: .04em; }
-  .role-q { background: rgba(125,167,199,.16); color: #9fc3e0; border: 1px solid rgba(125,167,199,.4); }
-  .role-a { background: rgba(95,224,183,.14); color: #7fe0c0; border: 1px solid rgba(95,224,183,.36); }
-  #summary .sumbar { margin: 0 0 14px; padding: 6px 12px; border-radius: 8px;
-    background: rgba(255,255,255,.04); border: 1px solid var(--glass-border); color: #9a9aa2; }
-  .turn-sum { font-size: 13.5px; line-height: 1.7; margin: 4px 0 0; color: #d8d8de; }
-  .turn details { margin-top: 6px; }
-  .turn details > summary { cursor: pointer; color: #6a6a72; font-size: 11px; letter-spacing: .08em; list-style: none; }
-  .turn details > summary::-webkit-details-marker { display: none; }
-  .turn details > summary::before { content: "▸ 原文"; }
-  .turn details[open] > summary::before { content: "▾ 原文"; }
-  .turn .raw-body { margin-top: 6px; padding-left: 10px; border-left: 1px solid var(--glass-border); }
-  .turn .raw-body .rl { display: flex; gap: 10px; line-height: 1.6; }
-  .turn .raw-body .rl .rt { flex-shrink: 0; width: 64px; text-align: right; color: #5d7e96; font-size: 11px;
+  /* ---- AI要約ビュー (kokkaidb風 質疑応答カード) ---- */
+  #summary { max-width: 880px; margin: 0 auto; padding: 16px 16px 80px; }
+  #summary .sumbar { margin: 0 0 12px; padding: 6px 12px; border-radius: 8px;
+    background: rgba(255,255,255,.04); border: 1px solid var(--glass-border); color: #9a9aa2; font-size: 11px; }
+  .qa-count { font-size: 18px; font-weight: 800; margin: 6px 0 14px; }
+  .qa-card { border: 1px solid var(--glass-border); border-radius: 10px; overflow: hidden; margin: 0 0 16px;
+    background: rgba(255,255,255,.02); }
+  .qa-card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 10px 14px; background: rgba(255,255,255,.05); border-bottom: 1px solid var(--glass-border); }
+  .qa-title { font-size: 15px; font-weight: 800; color: #eee; }
+  .qa-time { flex-shrink: 0; font-size: 12px; color: #7da7c7; font-variant-numeric: tabular-nums; }
+  .qa-row { display: flex; align-items: stretch; }
+  .qa-row + .qa-row { border-top: 1px solid var(--glass-border); }
+  .qa-label { flex-shrink: 0; width: 60px; padding: 10px 0; text-align: center; font-size: 12px; font-weight: 800;
+    border-left: 3px solid transparent; }
+  .qa-content { flex: 1; padding: 10px 14px; min-width: 0; }
+  .qa-speaker { font-size: 13px; color: #aab; margin-bottom: 5px; }
+  .qa-speaker b { color: #eee; font-weight: 800; }
+  .qa-speaker .note { color: #8a8a92; font-weight: 400; margin-left: 4px; }
+  .qa-text { font-size: 13.5px; line-height: 1.75; color: #d8d8de; }
+  .qa-bullets { margin: 0; padding-left: 18px; font-size: 13.5px; line-height: 1.75; color: #d8d8de; }
+  .qa-bullets li { margin: 2px 0; }
+  .qa-row--q .qa-label { color: #7da7c7; background: rgba(125,167,199,.10); border-left-color: #7da7c7; }
+  .qa-row--a .qa-label { color: #5fe0b7; background: rgba(95,224,183,.10); border-left-color: #5fe0b7; }
+  .qa-row--n .qa-label { color: #9a9aa2; background: rgba(255,255,255,.04); border-left-color: #6a6a72; }
+  .qa-row--full .qa-label { color: #d9a05b; background: rgba(217,160,91,.10); border-left-color: #d9a05b; }
+  .qa-row--full .qa-content { padding: 8px 14px; }
+  .fulltext > summary { cursor: pointer; color: #7da7c7; font-size: 12px; list-style: none; }
+  .fulltext > summary::-webkit-details-marker { display: none; }
+  .fulltext > summary::before { content: "▶ "; }
+  .fulltext[open] > summary::before { content: "▼ "; }
+  .fulltext .raw-body { margin-top: 8px; padding-left: 10px; border-left: 1px solid var(--glass-border); }
+  .fulltext .raw-body .rl { display: flex; gap: 10px; line-height: 1.6; }
+  .fulltext .raw-body .rl .rt { flex-shrink: 0; width: 64px; text-align: right; color: #5d7e96; font-size: 11px;
     font-variant-numeric: tabular-nums; }
-  .turn .raw-body .rl .rx { font-size: 13px; color: #b8b8c0; }
+  .fulltext .raw-body .rl .rx { font-size: 13px; color: #b8b8c0; }
 
   /* ---- 設定パネル ---- */
   #settings { position: fixed; top: 52px; right: 16px; z-index: 10; width: 300px; max-width: calc(100vw - 32px);
@@ -579,6 +581,11 @@ function fmtCost(usd) {
   return `$${usd < 0.01 ? usd.toFixed(5) : usd.toFixed(4)}（約${yen < 1 ? yen.toFixed(1) : Math.round(yen)}円）`;
 }
 
+// summaryを文ごとの箇条書きに分割(。や改行区切り)
+function toBullets(text) {
+  return String(text || "").split(/[。\n]+/).map((s) => s.trim()).filter(Boolean);
+}
+
 function renderSummary(sess, cues, data) {
   const root = $("summary");
   root.innerHTML = "";
@@ -589,27 +596,60 @@ function renderSummary(sess, cues, data) {
   const costStr = data.fromCache ? "キャッシュ表示（今回の課金なし）" : `コスト ${fmtCost(data.cost || 0)}`;
   bar.textContent = `🧾 ${costStr} ・ ${data.model || ""}${data.failed ? ` ・ 一部失敗 ${data.failed}` : ""}`;
   root.appendChild(bar);
-  const nextTurnI = (idx) => { for (const t of turns) if (t.i > idx) return t.i; return cues.length; };
+  const count = document.createElement("div"); count.className = "qa-count"; count.textContent = `質疑応答（${qa.length}件）`;
+  root.appendChild(count);
   const inRange = (lo, hi) => turns.filter((t) => t.i >= lo && t.i < hi);
+
   qa.forEach((q, k) => {
-    const sec = document.createElement("section"); sec.className = "qa";
-    // 見出しと箇条書き要旨は常時表示
-    const head = document.createElement("div"); head.className = "qa-head";
-    const who = q.kind === "手続き" ? "議事手続き" : (q.questioner || "質疑");
-    head.innerHTML = `<span class="who">${esc(who)}</span> — ${esc(q.gist || "")}`;
-    sec.appendChild(head);
-    const pts = Array.isArray(q.points) ? q.points : (typeof q.points === "string" ? [q.points] : (q.summary ? [q.summary] : [])); // 旧キャッシュ・型ブレ互換
-    if (pts.length) { const ul = document.createElement("ul"); ul.className = "qa-points"; for (const p of pts) { const li = document.createElement("li"); li.textContent = p; ul.appendChild(li); } sec.appendChild(ul); }
-    // 発言(ターン/原文)は折りたたみ
-    const lo = k === 0 ? 0 : q.i, hi = k + 1 < qa.length ? qa[k + 1].i : cues.length; // 先頭qa前の発言も取りこぼさない
-    const ts = inRange(lo, hi);
-    if (ts.length) {
-      const det = document.createElement("details"); det.className = "qa-turns";
-      const sm = document.createElement("summary"); sm.textContent = ` ${ts.length}件`; det.appendChild(sm);
-      for (const t of ts) det.appendChild(turnEl(sess, cues, t, nextTurnI(t.i), q.questioner));
-      sec.appendChild(det);
+    const lo = k === 0 ? 0 : q.i, hi = k + 1 < qa.length ? qa[k + 1].i : cues.length;
+    const card = document.createElement("section"); card.className = "qa-card";
+    // ヘッダ: トピック名 + 開始時刻
+    const head = document.createElement("div"); head.className = "qa-card-head";
+    const title = document.createElement("span"); title.className = "qa-title";
+    title.textContent = q.gist || (q.kind === "手続き" ? "議事手続き" : (q.questioner ? `${q.questioner}の質疑` : "質疑"));
+    const time = document.createElement("span"); time.className = "qa-time";
+    if (cues[lo]) time.textContent = `▶ ${sess.fmtTime(cues[lo].t)}〜`;
+    head.append(title, time); card.appendChild(head);
+
+    // 各発言を 質問/答弁/進行 の行として描画
+    for (const t of inRange(lo, hi)) {
+      const role = turnRole(t.sp, q.questioner); // 質問/答弁/""
+      const kind = role === "質問" ? "q" : role === "答弁" ? "a" : "n";
+      const row = document.createElement("div"); row.className = `qa-row qa-row--${kind}`;
+      const lab = document.createElement("div"); lab.className = "qa-label"; lab.textContent = role || "進行";
+      const content = document.createElement("div"); content.className = "qa-content";
+      const sp = document.createElement("div"); sp.className = "qa-speaker";
+      const note = role === "質問" ? "質疑者" : role === "答弁" ? "答弁者" : "";
+      sp.innerHTML = `<b>${esc(t.sp || "")}</b>${note ? `<span class="note">（${note}）</span>` : ""}`;
+      content.appendChild(sp);
+      const bullets = toBullets(t.summary || t.gist);
+      if (bullets.length > 1) {
+        const ul = document.createElement("ul"); ul.className = "qa-bullets";
+        for (const b of bullets) { const li = document.createElement("li"); li.textContent = b; ul.appendChild(li); }
+        content.appendChild(ul);
+      } else {
+        const p = document.createElement("div"); p.className = "qa-text"; p.textContent = t.summary || t.gist || ""; content.appendChild(p);
+      }
+      row.append(lab, content); card.appendChild(row);
     }
-    root.appendChild(sec);
+
+    // 全文(原文)行
+    const frow = document.createElement("div"); frow.className = "qa-row qa-row--full";
+    const flab = document.createElement("div"); flab.className = "qa-label"; flab.textContent = "全文";
+    const fc = document.createElement("div"); fc.className = "qa-content";
+    const det = document.createElement("details"); det.className = "fulltext";
+    const dsm = document.createElement("summary"); dsm.textContent = "質問・答弁の全文を表示"; det.appendChild(dsm);
+    const rb = document.createElement("div"); rb.className = "raw-body";
+    for (let i = Math.max(0, lo); i < Math.min(cues.length, hi); i++) {
+      const cu = cues[i];
+      const rl = document.createElement("div"); rl.className = "rl";
+      const rt = document.createElement("span"); rt.className = "rt"; rt.textContent = sess.fmtTime(cu.t);
+      const rx = document.createElement("span"); rx.className = "rx"; rx.textContent = cu.text;
+      rl.append(rt, rx); rb.appendChild(rl);
+    }
+    det.appendChild(rb); fc.appendChild(det); frow.append(flab, fc); card.appendChild(frow);
+
+    root.appendChild(card);
   });
   showView("summary");
 }
@@ -622,30 +662,9 @@ function turnRole(sp, questioner) {
   // 同姓の閣僚答弁を質問と誤判定しないよう、役職パターンを先に判定
   if (/大臣|参考人|長官|次官|審議官|局長|部長|課長|政府|参与|総裁|公述人|政務官|総理/.test(x)) return "答弁";
   const q = norm(questioner);
-  if (q && (x.includes(q) || q.includes(x))) return "質問";
-  return q ? "質問" : "";
-}
-
-function turnEl(sess, cues, t, end, questioner) {
-  const d = document.createElement("div"); d.className = "turn";
-  const head = document.createElement("div"); head.className = "turn-head";
-  const role = turnRole(t.sp, questioner);
-  const badge = role ? `<span class="role-badge ${role === "質問" ? "role-q" : "role-a"}">${role}</span>` : "";
-  head.innerHTML = `${badge}<span class="sp">${esc(t.sp || "")}</span><span class="gist">${esc(t.gist || "")}</span>`;
-  d.appendChild(head);
-  if (t.summary) { const s = document.createElement("div"); s.className = "turn-sum"; s.textContent = t.summary; d.appendChild(s); }
-  const det = document.createElement("details");
-  det.appendChild(document.createElement("summary"));
-  const rb = document.createElement("div"); rb.className = "raw-body";
-  for (let i = Math.max(0, t.i); i < Math.min(cues.length, end); i++) {
-    const cu = cues[i];
-    const rl = document.createElement("div"); rl.className = "rl";
-    const rt = document.createElement("span"); rt.className = "rt"; rt.textContent = sess.fmtTime(cu.t);
-    const rx = document.createElement("span"); rx.className = "rx"; rx.textContent = cu.text;
-    rl.append(rt, rx); rb.appendChild(rl);
-  }
-  det.appendChild(rb); d.appendChild(det);
-  return d;
+  if (!q) return ""; // 質問者不明(手続き等)は中立
+  // 質疑内では、質問者本人=質問・それ以外の発言者=答弁(役職名のない提出者等も答弁に)
+  return (x.includes(q) || q.includes(x)) ? "質問" : "答弁";
 }
 
 function showView(which) {
