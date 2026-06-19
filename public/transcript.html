@@ -136,7 +136,12 @@
 <script>
 const $ = (id) => document.getElementById(id);
 const statusEl = $("status");
-const SEG_CONCURRENCY = 32; // CDNはHTTP/2なので多重化される。長時間会議(4000セグメント超)の初回読み込み対策
+// セグメント取得の並列数。CDNはHTTP/2多重化なので高並列が効く(分析: 985件を32並列だと
+// 並列効率31.6/32で飽和し、wall≈件数×RTT/並列。並列を上げると素直に縮む)。?conc=N で上書き可
+const SEG_CONCURRENCY = (() => {
+  const c = parseInt(new URLSearchParams(location.search).get("conc"), 10);
+  return Number.isInteger(c) && c > 0 ? c : 96;
+})();
 const LIVE_POLL_MS = 15_000;
 
 // ?debug=1 でボトルネック分析ログを出す
@@ -156,6 +161,24 @@ async function fetchOk(url, opts) {
       await new Promise((r) => setTimeout(r, 800));
     }
   }
+}
+
+// 取得済み字幕セグメントを永続キャッシュ(Cache Storage)。HLSセグメントはURL不変・内容不変なので
+// 再オープン時はネットワーク無しで返せる(VODは全ヒット、ライブは新規分のみ取得)。
+const SEG_CACHE = "shusantv-vtt-v1";
+async function fetchSegmentText(url, stats) {
+  let cache;
+  if (typeof caches !== "undefined") {
+    try {
+      cache = await caches.open(SEG_CACHE);
+      const hit = await cache.match(url);
+      if (hit) { if (stats) stats.hit++; return hit.text(); }
+    } catch { /* キャッシュ不可ならネットワークにフォールバック */ }
+  }
+  if (stats) stats.miss++;
+  const text = await (await fetchOk(url)).text(); // 失敗時は呼び出し側(pull)の.catchに委ねる(二重fetchしない)
+  if (cache) cache.put(url, new Response(text, { headers: { "Content-Type": "text/vtt" } })).catch(() => {});
+  return text;
 }
 
 // ---- m3u8 / VTT パース ----
@@ -243,6 +266,7 @@ class TranscriptSession {
     if (todo.length) {
       const texts = new Array(todo.length);
       const durs = new Array(todo.length); // 各セグメントの取得所要(ms)
+      const cstats = { hit: 0, miss: 0 };
       let next = 0, done = 0;
       const conc = Math.min(SEG_CONCURRENCY, todo.length);
       const tFetch = performance.now();
@@ -250,7 +274,7 @@ class TranscriptSession {
         while (next < todo.length && this.alive) {
           const i = next++;
           const ts = performance.now();
-          texts[i] = await fetchOk(todo[i]).then((r) => r.text()).catch(() => null);
+          texts[i] = await fetchSegmentText(todo[i], cstats).catch(() => null);
           durs[i] = performance.now() - ts;
           onProgress?.(++done, todo.length);
         }
@@ -264,7 +288,7 @@ class TranscriptSession {
         const bytes = texts.reduce((a, t) => a + (t ? t.length : 0), 0);
         dlog(
           `pull: セグメント取得 wall=${Math.round(wall)}ms (並列${conc})\n` +
-          `  件数=${todo.length} 失敗=${fails} 合計DL=${(bytes / 1024).toFixed(0)}KB\n` +
+          `  件数=${todo.length} 失敗=${fails} キャッシュ hit=${cstats.hit}/miss=${cstats.miss} 合計DL=${(bytes / 1024).toFixed(0)}KB\n` +
           `  1件あたり ms: 平均${Math.round(sum / (ok.length || 1))} / p50=${pctl(ok, .5)} / p95=${pctl(ok, .95)} / 最大=${Math.round(Math.max(0, ...ok))}\n` +
           `  並列効率=${(sum / wall).toFixed(1)}x (理論上限${conc}x。低いほど直列化/律速されている)\n` +
           `  スループット=${(todo.length / (wall / 1000)).toFixed(1)} 件/秒`
