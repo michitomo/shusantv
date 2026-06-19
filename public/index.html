@@ -379,7 +379,7 @@ function makeTile(s) {
     maxBufferLength: 6,            // 前方バッファを15→6sに圧縮
     liveSyncDurationCount: 1,      // ライブエッジ手前1セグメントで同期(既定3)
     liveMaxLatencyDurationCount: 5, // これ以上遅れたらエッジへシーク
-    maxLiveSyncPlaybackRate: 1.5,  // 遅れたら最大1.5倍速で追従(再バッファ回避)
+    maxLiveSyncPlaybackRate: 1.15, // 遅れたら最大1.15倍速で追従(国会中継は音声主体なので控えめに)
     backBufferLength: 0,           // 後方バッファは保持しない
   });
   const t = { el, video, hls, stream: s, lowest: 0, highest: 0, audio: null, hitUntil: 0 };
