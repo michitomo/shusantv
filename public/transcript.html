@@ -139,6 +139,11 @@ const statusEl = $("status");
 const SEG_CONCURRENCY = 32; // CDNはHTTP/2なので多重化される。長時間会議(4000セグメント超)の初回読み込み対策
 const LIVE_POLL_MS = 15_000;
 
+// ?debug=1 でボトルネック分析ログを出す
+const DEBUG = new URLSearchParams(location.search).has("debug");
+const dlog = (...a) => { if (DEBUG) console.log("%c[shusantv]", "color:#5fe0b7", ...a); };
+const pctl = (arr, p) => { if (!arr.length) return 0; const s = arr.slice().sort((a, b) => a - b); return Math.round(s[Math.min(s.length - 1, Math.floor(s.length * p))]); };
+
 async function fetchOk(url, opts) {
   // CDN がたまに落とすのでリトライ1回
   for (let i = 0; ; i++) {
@@ -229,20 +234,43 @@ class TranscriptSession {
 
   // プレイリストを読み、未取得セグメントの字幕を取り込む。戻り値: 配信終了済みか
   async pull(onProgress) {
+    const tPlaylist = performance.now();
     const playlist = await (await fetchOk(this.subsUrl, { cache: "no-store" })).text();
+    const playlistMs = performance.now() - tPlaylist;
     const segs = segmentUrls(playlist, this.subsUrl);
     const todo = segs.filter((url) => !this.fetchedUrls.has(url));
+    dlog(`pull: プレイリスト取得 ${Math.round(playlistMs)}ms / 全${segs.length}セグメント中 未取得${todo.length}`);
     if (todo.length) {
       const texts = new Array(todo.length);
+      const durs = new Array(todo.length); // 各セグメントの取得所要(ms)
       let next = 0, done = 0;
-      await Promise.all(Array.from({ length: Math.min(SEG_CONCURRENCY, todo.length) }, async () => {
+      const conc = Math.min(SEG_CONCURRENCY, todo.length);
+      const tFetch = performance.now();
+      await Promise.all(Array.from({ length: conc }, async () => {
         while (next < todo.length && this.alive) {
           const i = next++;
+          const ts = performance.now();
           texts[i] = await fetchOk(todo[i]).then((r) => r.text()).catch(() => null);
+          durs[i] = performance.now() - ts;
           onProgress?.(++done, todo.length);
         }
       }));
       if (!this.alive) return true;
+      if (DEBUG) {
+        const ok = durs.filter((_, i) => texts[i] != null);
+        const fails = texts.filter((t) => t == null).length;
+        const wall = performance.now() - tFetch;
+        const sum = durs.reduce((a, b) => a + (b || 0), 0);
+        const bytes = texts.reduce((a, t) => a + (t ? t.length : 0), 0);
+        dlog(
+          `pull: セグメント取得 wall=${Math.round(wall)}ms (並列${conc})\n` +
+          `  件数=${todo.length} 失敗=${fails} 合計DL=${(bytes / 1024).toFixed(0)}KB\n` +
+          `  1件あたり ms: 平均${Math.round(sum / (ok.length || 1))} / p50=${pctl(ok, .5)} / p95=${pctl(ok, .95)} / 最大=${Math.round(Math.max(0, ...ok))}\n` +
+          `  並列効率=${(sum / wall).toFixed(1)}x (理論上限${conc}x。低いほど直列化/律速されている)\n` +
+          `  スループット=${(todo.length / (wall / 1000)).toFixed(1)} 件/秒`
+        );
+      }
+      const tParse = performance.now();
       const fresh = [];
       for (let i = 0; i < todo.length; i++) {
         const text = texts[i];
@@ -288,6 +316,7 @@ class TranscriptSession {
         this.lastEnd = null;
         appendCues(this, this.cues);
       }
+      dlog(`pull: パース+描画 ${Math.round(performance.now() - tParse)}ms / 新規cue ${fresh.length} (累計${this.cues.length})`);
     }
     return playlist.includes("#EXT-X-ENDLIST");
   }
@@ -572,13 +601,16 @@ async function openMeeting(entry) {
   $("dlTxt").disabled = $("dlVtt").disabled = true;
   $("aiBtn").disabled = true;
   try {
+    const tOpen = performance.now();
     await Promise.all([sess.resolveSubsUrl(), sess.loadChannelInfo()]);
     if (!sess.alive) return;
+    dlog(`open「${entry.name}」: 字幕トラック解決 ${Math.round(performance.now() - tOpen)}ms`);
     const progress = (done, total) => {
       if (sess.alive) statusEl.textContent = `字幕取得中 ${done}/${total}`;
     };
     let ended = await sess.pull(progress);
     if (!sess.alive) return;
+    dlog(`open「${entry.name}」: 初回ロード完了 計${Math.round(performance.now() - tOpen)}ms (${sess.cues.length}発言)`);
     $("dlTxt").disabled = $("dlVtt").disabled = false;
     refreshAiBtn();
     if (!sess.cues.length) showMessage(ended ? "字幕がありません" : "まだ字幕がありません(発言が始まると表示されます)");
