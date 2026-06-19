@@ -524,6 +524,15 @@ async function callChunk(cues, start, end, c) {
   } catch { return { qa: [], turns: [], cost }; }
 }
 
+// 質問者名の表記ゆれ(敬称「くん/君/さん」・会派や役職注記・空白)を吸収して同一人物か判定。
+// チャンク境界で同じ質問者の質疑が「○○くん」「○○議員」等に割れて重複カードになるのを防ぐ。
+// 字幕の誤変換で姓が二重化する(例「足立安達悠司」)ケースも拾えるよう部分一致も許容する。
+const sameQuestioner = (a, b) => {
+  const n = (s) => (s || "").replace(/\s|くん|君|さん|議員|委員|（[^）]*）|\([^)]*\)/g, "");
+  const x = n(a), y = n(b);
+  return !!x && !!y && (x === y || x.includes(y) || y.includes(x));
+};
+
 // チャンク結果を統合: turn重複除去 + 境界で分断された同一質問者の質疑を結合
 function stitch(parts) {
   const qa = [], turns = [];
@@ -534,7 +543,7 @@ function stitch(parts) {
   const qm = [];
   for (const q of qa) {
     const last = qm[qm.length - 1];
-    if (last && q.kind === "質疑" && last.kind === "質疑" && q.questioner && q.questioner === last.questioner) continue;
+    if (last && q.kind === "質疑" && last.kind === "質疑" && sameQuestioner(q.questioner, last.questioner)) continue;
     qm.push(q);
   }
   return { qa: qm, turns: tdedup };
