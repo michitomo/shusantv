@@ -67,6 +67,12 @@
   .turn-head { font-size: 13px; font-weight: 700; color: #eee; }
   .turn-head .sp { color: #7da7c7; }
   .turn-head .gist { color: #9a9aa2; font-weight: 400; margin-left: 8px; }
+  .role-badge { display: inline-block; font-size: 10px; font-weight: 800; line-height: 1.5; padding: 0 7px;
+    border-radius: 999px; margin-right: 8px; vertical-align: middle; letter-spacing: .04em; }
+  .role-q { background: rgba(125,167,199,.16); color: #9fc3e0; border: 1px solid rgba(125,167,199,.4); }
+  .role-a { background: rgba(95,224,183,.14); color: #7fe0c0; border: 1px solid rgba(95,224,183,.36); }
+  #summary .sumbar { margin: 0 0 14px; padding: 6px 12px; border-radius: 8px;
+    background: rgba(255,255,255,.04); border: 1px solid var(--glass-border); color: #9a9aa2; }
   .turn-sum { font-size: 13.5px; line-height: 1.7; margin: 4px 0 0; color: #d8d8de; }
   .turn details { margin-top: 6px; }
   .turn details > summary { cursor: pointer; color: #6a6a72; font-size: 11px; letter-spacing: .08em; list-style: none; }
@@ -119,6 +125,9 @@
   <select id="setModel">
     <option value="openai/gpt-oss-120b">openai/gpt-oss-120b (推奨)</option>
     <option value="google/gemma-4-31b-it">google/gemma-4-31b-it</option>
+    <option value="openai/gpt-oss-120b:free">openai/gpt-oss-120b:free (無料)</option>
+    <option value="nvidia/nemotron-3-ultra-550b-a55b:free">nvidia/nemotron-3-ultra-550b-a55b:free (無料)</option>
+    <option value="google/gemma-4-31b-it:free">google/gemma-4-31b-it:free (無料)</option>
   </select>
   <label for="setProvider">プロバイダ (任意・カンマ区切り)</label>
   <input id="setProvider" type="text" placeholder="cerebras">
@@ -126,7 +135,7 @@
     <button id="setSave">保存</button>
     <button id="setClear">キーを削除</button>
   </div>
-  <div class="hint">キーは<b>この端末のブラウザ内(localStorage)のみ</b>に保存され、要約はあなたのブラウザから直接OpenRouterへ送られます。本文は書き換えません。<a href="https://openrouter.ai/keys" target="_blank" rel="noopener">キーの取得</a></div>
+  <div class="hint">キーは<b>この端末のブラウザ内(localStorage)のみ</b>に保存され、要約はあなたのブラウザから直接OpenRouterへ送られます。本文は書き換えません。<br><b>無料モデルでもAPIキーは必要</b>です(レート制限あり。長い会議だと一部失敗することがあります)。<a href="https://openrouter.ai/keys" target="_blank" rel="noopener">キーの取得</a></div>
 </div>
 <div id="transcript"><div id="message">会議を選択してください</div></div>
 <div id="summary" hidden></div>
@@ -482,8 +491,10 @@ async function callChunk(cues, start, end, c) {
     model: c.model,
     messages: [{ role: "system", content: SUM_SYSTEM }, { role: "user", content: body }],
     temperature: 0.2,
+    usage: { include: true }, // レスポンスに課金額(usage.cost)を含める
   };
-  if (c.provider) {
+  // 無料モデル(:free)は専用エンドポイントに任せるためプロバイダ指定しない
+  if (c.provider && !c.model.endsWith(":free")) {
     const order = c.provider.split(",").map((s) => s.trim()).filter(Boolean);
     if (order.length) payload.provider = { order, allow_fallbacks: true };
   }
@@ -494,15 +505,16 @@ async function callChunk(cues, start, end, c) {
     body: JSON.stringify(payload),
   });
   const j = await res.json();
+  const cost = j.usage?.cost ?? 0;
   const text = j.choices?.[0]?.message?.content ?? "";
   const s = text.indexOf("{"), e = text.lastIndexOf("}");
-  if (s < 0 || e < 0) return { qa: [], turns: [] };
+  if (s < 0 || e < 0) return { qa: [], turns: [], cost };
   try {
     const p = JSON.parse(text.slice(s, e + 1));
     // LLMが i を文字列で返すことがあるので整数化し、無効なものは除外
     const norm = (arr) => (Array.isArray(arr) ? arr : []).map((o) => ({ ...o, i: parseInt(o.i, 10) })).filter((o) => Number.isInteger(o.i));
-    return { qa: norm(p.qa), turns: norm(p.turns) };
-  } catch { return { qa: [], turns: [] }; }
+    return { qa: norm(p.qa), turns: norm(p.turns), cost };
+  } catch { return { qa: [], turns: [], cost }; }
 }
 
 // チャンク結果を統合: turn重複除去 + 境界で分断された同一質問者の質疑を結合
@@ -527,27 +539,31 @@ async function summarize() {
   if (!c.key) { $("settings").classList.add("open"); return; }
   if (!sess || !sess.cues.length) return;
   const cues = [...sess.cues].sort((a, b) => a.t - b.t);
-  const cacheKey = `shusantv.sum.${sess.entry.id}.${cues.length}`;
+  const cacheKey = `shusantv.sum.${sess.entry.id}.${cues.length}.${c.model}`;
   let data = null;
-  try { const hit = localStorage.getItem(cacheKey); if (hit) data = JSON.parse(hit); } catch { /* 無視 */ }
+  try { const hit = localStorage.getItem(cacheKey); if (hit) { data = JSON.parse(hit); data.fromCache = true; } } catch { /* 無視 */ }
   if (!data) {
     $("aiBtn").disabled = true;
     const ranges = [];
     for (let i = 0; i < cues.length; i += SUMMARY_CHUNK) ranges.push([i, Math.min(i + SUMMARY_CHUNK, cues.length)]);
     const parts = new Array(ranges.length);
     let next = 0, done = 0, failed = 0;
+    const conc = c.model.endsWith(":free") ? 2 : SUMMARY_CONC; // 無料枠はレート制限が厳しいので絞る
     statusEl.textContent = `要約中 0/${ranges.length}`;
-    await Promise.all(Array.from({ length: Math.min(SUMMARY_CONC, ranges.length) }, async () => {
+    await Promise.all(Array.from({ length: Math.min(conc, ranges.length) }, async () => {
       while (next < ranges.length) {
         const k = next++;
         try { parts[k] = await callChunk(cues, ranges[k][0], ranges[k][1], c); }
-        catch { parts[k] = { qa: [], turns: [] }; failed++; }
+        catch { parts[k] = { qa: [], turns: [], cost: 0 }; failed++; }
         if (sess !== session) return;
         statusEl.textContent = `要約中 ${++done}/${ranges.length}`;
       }
     }));
     if (sess !== session) return; // 会議が切り替わっていたら破棄
     data = stitch(parts.filter(Boolean));
+    data.cost = parts.reduce((a, p) => a + (p && p.cost || 0), 0);
+    data.model = c.model;
+    data.failed = failed;
     statusEl.textContent = failed ? `要約完了 (一部失敗 ${failed})` : "要約完了";
     try { localStorage.setItem(cacheKey, JSON.stringify(data)); } catch { /* 容量超過は無視 */ }
   }
@@ -555,11 +571,24 @@ async function summarize() {
   refreshAiBtn();
 }
 
+// 課金額の表示用フォーマット(USD + 概算円)。円レートは概算
+const JPY_PER_USD = 155;
+function fmtCost(usd) {
+  if (!usd) return "$0";
+  const yen = usd * JPY_PER_USD;
+  return `$${usd < 0.01 ? usd.toFixed(5) : usd.toFixed(4)}（約${yen < 1 ? yen.toFixed(1) : Math.round(yen)}円）`;
+}
+
 function renderSummary(sess, cues, data) {
   const root = $("summary");
   root.innerHTML = "";
   const { qa, turns } = data;
   if (!qa.length && !turns.length) { root.innerHTML = '<div id="message">要約を生成できませんでした</div>'; showView("summary"); return; }
+  // 課金額・モデルのバー
+  const bar = document.createElement("div"); bar.className = "sumbar";
+  const costStr = data.fromCache ? "キャッシュ表示（今回の課金なし）" : `コスト ${fmtCost(data.cost || 0)}`;
+  bar.textContent = `🧾 ${costStr} ・ ${data.model || ""}${data.failed ? ` ・ 一部失敗 ${data.failed}` : ""}`;
+  root.appendChild(bar);
   const nextTurnI = (idx) => { for (const t of turns) if (t.i > idx) return t.i; return cues.length; };
   const inRange = (lo, hi) => turns.filter((t) => t.i >= lo && t.i < hi);
   qa.forEach((q, k) => {
@@ -577,7 +606,7 @@ function renderSummary(sess, cues, data) {
     if (ts.length) {
       const det = document.createElement("details"); det.className = "qa-turns";
       const sm = document.createElement("summary"); sm.textContent = ` ${ts.length}件`; det.appendChild(sm);
-      for (const t of ts) det.appendChild(turnEl(sess, cues, t, nextTurnI(t.i)));
+      for (const t of ts) det.appendChild(turnEl(sess, cues, t, nextTurnI(t.i), q.questioner));
       sec.appendChild(det);
     }
     root.appendChild(sec);
@@ -585,10 +614,23 @@ function renderSummary(sess, cues, data) {
   showView("summary");
 }
 
-function turnEl(sess, cues, t, end) {
+// 役割(質問/答弁)を発言者名と質問者名から推定(LLM出力を増やさずクライアント側で導出)
+function turnRole(sp, questioner) {
+  const norm = (s) => (s || "").replace(/\s|くん|君|さん/g, "");
+  const x = norm(sp);
+  if (!x || x.includes("委員長") || x.includes("会長")) return ""; // 進行(中立)
+  const q = norm(questioner);
+  if (q && (x.includes(q) || q.includes(x))) return "質問";
+  if (/大臣|参考人|長官|次官|審議官|局長|部長|課長|政府|参与|総裁|公述人/.test(x)) return "答弁";
+  return q ? "質問" : "";
+}
+
+function turnEl(sess, cues, t, end, questioner) {
   const d = document.createElement("div"); d.className = "turn";
   const head = document.createElement("div"); head.className = "turn-head";
-  head.innerHTML = `<span class="sp">${esc(t.sp || "")}</span><span class="gist">${esc(t.gist || "")}</span>`;
+  const role = turnRole(t.sp, questioner);
+  const badge = role ? `<span class="role-badge ${role === "質問" ? "role-q" : "role-a"}">${role}</span>` : "";
+  head.innerHTML = `${badge}<span class="sp">${esc(t.sp || "")}</span><span class="gist">${esc(t.gist || "")}</span>`;
   d.appendChild(head);
   if (t.summary) { const s = document.createElement("div"); s.className = "turn-sum"; s.textContent = t.summary; d.appendChild(s); }
   const det = document.createElement("details");
