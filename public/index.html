@@ -369,7 +369,19 @@ function makeTile(s) {
     </div>`;
   setTileName(el, s);
   const video = el.querySelector("video");
-  const hls = new Hls({ capLevelToPlayerSize: false, startLevel: 0, maxBufferLength: 15, subtitleDisplay: false });
+  // 遅延削減: ライブエッジ近くで再生する。liveSyncDurationCount を小さくするほど
+  // ライブに近づく(=低遅延)が、回線が細いと再バッファが増える。
+  // maxLiveSyncPlaybackRate で、遅れた時に再生速度を少し上げてエッジに追従する(無音stallを避ける)。
+  const hls = new Hls({
+    capLevelToPlayerSize: false,
+    startLevel: 0,
+    subtitleDisplay: false,
+    maxBufferLength: 6,            // 前方バッファを15→6sに圧縮
+    liveSyncDurationCount: 1,      // ライブエッジ手前1セグメントで同期(既定3)
+    liveMaxLatencyDurationCount: 5, // これ以上遅れたらエッジへシーク
+    maxLiveSyncPlaybackRate: 1.5,  // 遅れたら最大1.5倍速で追従(再バッファ回避)
+    backBufferLength: 0,           // 後方バッファは保持しない
+  });
   const t = { el, video, hls, stream: s, lowest: 0, highest: 0, audio: null, hitUntil: 0 };
 
   hls.on(Hls.Events.MANIFEST_PARSED, () => {
