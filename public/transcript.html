@@ -61,8 +61,8 @@
     padding: 10px 14px; background: rgba(255,255,255,.05); border-bottom: 1px solid var(--glass-border); }
   .qa-title { font-size: 15px; font-weight: 800; color: #eee; }
   .qa-time { flex-shrink: 0; font-size: 12px; color: #7da7c7; font-variant-numeric: tabular-nums; }
-  .qa-row { display: flex; align-items: stretch; border-top: 1px solid var(--glass-border); }
-  .qa-row:first-child { border-top: none; }
+  .qa-row { display: flex; align-items: stretch; }
+  .qa-row + .qa-row { border-top: 1px solid var(--glass-border); }
   .qa-label { flex-shrink: 0; width: 60px; padding: 10px 0; text-align: center; font-size: 12px; font-weight: 800;
     border-left: 3px solid transparent; }
   .qa-content { flex: 1; padding: 10px 14px; min-width: 0; }
@@ -581,9 +581,9 @@ function fmtCost(usd) {
   return `$${usd < 0.01 ? usd.toFixed(5) : usd.toFixed(4)}（約${yen < 1 ? yen.toFixed(1) : Math.round(yen)}円）`;
 }
 
-// summaryを文ごとの箇条書きに分割(。区切り)
+// summaryを文ごとの箇条書きに分割(。や改行区切り)
 function toBullets(text) {
-  return String(text || "").split(/。/).map((s) => s.trim()).filter(Boolean);
+  return String(text || "").split(/[。\n]+/).map((s) => s.trim()).filter(Boolean);
 }
 
 function renderSummary(sess, cues, data) {
