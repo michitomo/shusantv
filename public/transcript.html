@@ -136,7 +136,12 @@
 <script>
 const $ = (id) => document.getElementById(id);
 const statusEl = $("status");
-const SEG_CONCURRENCY = 32; // CDNはHTTP/2なので多重化される。長時間会議(4000セグメント超)の初回読み込み対策
+// セグメント取得の並列数。CDNはHTTP/2多重化なので高並列が効く(分析: 985件を32並列だと
+// 並列効率31.6/32で飽和し、wall≈件数×RTT/並列。並列を上げると素直に縮む)。?conc=N で上書き可
+const SEG_CONCURRENCY = (() => {
+  const c = parseInt(new URLSearchParams(location.search).get("conc"), 10);
+  return Number.isInteger(c) && c > 0 ? c : 96;
+})();
 const LIVE_POLL_MS = 15_000;
 
 // ?debug=1 でボトルネック分析ログを出す
