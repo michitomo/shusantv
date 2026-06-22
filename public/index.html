@@ -34,6 +34,53 @@
   label.auto { font-size: 11px; color: #9a9aa2; user-select: none; display: flex; align-items: center; gap: 4px; }
   label.auto input { accent-color: var(--accent); }
 
+  /* 視聴時刻の予約 (方針①: 手動の時刻予約アラーム) */
+  #resvBtn { font-size: 11px; color: #9a9aa2; background: rgba(255,255,255,.06);
+    border: 1px solid var(--glass-border); border-radius: 999px; padding: 4px 12px; cursor: pointer; transition: border-color .2s, color .2s; }
+  #resvBtn:hover { border-color: var(--accent); color: #eee; }
+  #resvBtn.has::after { content: ""; display: inline-block; width: 6px; height: 6px; margin-left: 6px;
+    border-radius: 50%; background: var(--accent); vertical-align: 1px; box-shadow: 0 0 6px var(--accent); }
+  #resvPanel { position: fixed; top: 50px; right: 16px; z-index: 9; width: 320px; display: none;
+    background: var(--glass); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    border: 1px solid var(--glass-border); border-radius: 12px; padding: 14px; box-shadow: 0 8px 32px rgba(0,0,0,.6); }
+  #resvPanel.open { display: block; }
+  #resvPanel h2 { font-size: 12px; margin: 0 0 10px; font-weight: 800; letter-spacing: .1em; color: #c9c9cf; }
+  #resvPanel select, #resvPanel input[type=time] { width: 100%; box-sizing: border-box; margin-bottom: 6px;
+    background: rgba(255,255,255,.06); border: 1px solid var(--glass-border); color: #eee; border-radius: 8px;
+    padding: 6px 8px; font-size: 12px; outline: none; }
+  #resvPanel select:focus, #resvPanel input[type=time]:focus { border-color: var(--accent); }
+  #resvPanel .row { display: flex; gap: 6px; }
+  #resvPanel button.mini { flex: 1; font-size: 11px; color: #9a9aa2; background: rgba(255,255,255,.06);
+    border: 1px solid var(--glass-border); border-radius: 8px; padding: 5px 0; cursor: pointer; }
+  #resvPanel button.mini:hover { border-color: var(--accent); color: #eee; }
+  #resvAdd { width: 100%; margin-top: 8px; font-size: 12px; font-weight: 700; color: #052; background: var(--accent);
+    border: none; border-radius: 8px; padding: 8px 0; cursor: pointer; }
+  #resvAdd:disabled { opacity: .4; cursor: not-allowed; }
+  #resvList { list-style: none; margin: 12px 0 0; padding: 0; max-height: 240px; overflow-y: auto; }
+  #resvList:empty::before { content: "予約はありません"; color: #6a6a72; font-size: 11px; }
+  #resvList li { display: flex; align-items: center; gap: 8px; padding: 7px 0; font-size: 12px;
+    border-top: 1px solid var(--glass-border); }
+  #resvList li.fired { opacity: .45; }
+  #resvList li .meta { flex: 1; min-width: 0; display: flex; gap: 6px; align-items: baseline; }
+  #resvList li .meta .t { font-weight: 800; color: var(--accent); flex-shrink: 0; }
+  #resvList li.fired .meta .t { color: #9a9aa2; }
+  #resvList li .meta .nm { color: #c9c9cf; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #resvList li .cd { font-size: 10px; color: #8a8a92; flex-shrink: 0; }
+  #resvList li .del { cursor: pointer; color: #6a6a72; flex-shrink: 0; }
+  #resvList li .del:hover { color: var(--tally); }
+
+  /* 予約発動時のタイル強調(ミントのパルス) */
+  .tile.resv { outline: 3px solid var(--accent); outline-offset: -3px;
+    box-shadow: 0 0 30px rgba(95,224,183,.5); animation: pulse 1s ease-in-out 6; }
+
+  /* トースト(OS通知が無効でも画面内でフィードバック) */
+  #toast { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%) translateY(20px);
+    background: rgba(10,10,14,.85); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    border: 1px solid var(--accent); color: #eee; padding: 10px 18px; border-radius: 999px;
+    font-size: 13px; font-weight: 700; z-index: 20; opacity: 0; pointer-events: none;
+    transition: opacity .3s, transform .3s; }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
   #grid { display: grid; gap: 8px; padding: 8px; height: calc(100vh - 49px); box-sizing: border-box; }
 
   /* タイル: 枠は消し、わずかな境界線と影 */
@@ -132,12 +179,26 @@
   <span class="status" id="status">読み込み中…</span>
   <input id="watch" placeholder="ウォッチ: 議員名,会派をカンマ区切り">
   <label class="auto"><input type="checkbox" id="autoFocus" checked> ヒットで自動フォーカス</label>
+  <button id="resvBtn" type="button">⏰ 予約</button>
   <span class="status"><a href="transcript.html" style="color:#7da7c7;text-decoration:none">📝 文字起こし(参)</a></span>
   <span class="status credit">映像:
     <a href="https://www.shugiintv.go.jp/jp/" target="_blank" rel="noopener">衆議院インターネット審議中継</a> /
     <a href="https://www.webtv.sangiin.go.jp/webtv/" target="_blank" rel="noopener">参議院インターネット審議中継</a>
     （著作権は各議院に帰属。本サイトは非公式の個人用ビューアです）</span>
 </header>
+<div id="resvPanel">
+  <h2>視聴時刻を予約</h2>
+  <select id="resvMeeting"></select>
+  <input type="time" id="resvTime">
+  <div class="row">
+    <button type="button" class="mini" data-min="15">+15分</button>
+    <button type="button" class="mini" data-min="30">+30分</button>
+    <button type="button" class="mini" data-min="60">+60分</button>
+  </div>
+  <button type="button" id="resvAdd">この時刻に視聴開始を予約</button>
+  <ul id="resvList"></ul>
+</div>
+<div id="toast"></div>
 <div id="grid"></div>
 <div id="gate">クリックで開始（音声・発言認識の有効化）</div>
 <script type="module">
@@ -331,6 +392,175 @@ setInterval(() => {
   for (const t of tiles.values())
     if (t.hitUntil && Date.now() > t.hitUntil) { t.hitUntil = 0; t.el.classList.remove("hit"); }
 }, 5000);
+
+// ---- 視聴時刻の予約 (方針①: 手動の時刻予約アラーム) ----
+// ASRの名前検出に頼らず、ユーザーが「この会議をこの時刻に視聴開始」と予約する。
+// 予約時刻になったら該当タイルを自動フォーカス＋ビープ＋通知/トーストで知らせる。localStorageに永続化。
+const RESV_KEY = "reservations";
+let reservations = [];
+try { reservations = JSON.parse(localStorage.getItem(RESV_KEY) || "[]"); } catch {}
+// 過去(主に前日)の予約は無意味な上、起動直後に一斉発動してしまうので読み込み時に掃除する
+reservations = reservations.filter((r) => r.at > Date.now());
+const saveResv = () => localStorage.setItem(RESV_KEY, JSON.stringify(reservations));
+
+const resvBtn = document.getElementById("resvBtn");
+const resvPanel = document.getElementById("resvPanel");
+const resvMeeting = document.getElementById("resvMeeting");
+const resvTime = document.getElementById("resvTime");
+const resvAdd = document.getElementById("resvAdd");
+const resvList = document.getElementById("resvList");
+const toastEl = document.getElementById("toast");
+
+const houseLabel = (h) => (h === "shugiin" ? "衆" : "参");
+const fmtClock = (ts) => {
+  const d = new Date(ts);
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+};
+const fmtCountdown = (ms) => {
+  if (ms <= 0) return "まもなく";
+  const m = Math.floor(ms / 60000), s = Math.floor((ms % 60000) / 1000);
+  return m >= 60 ? `${Math.floor(m / 60)}時間${m % 60}分後` : m > 0 ? `あと${m}分` : `あと${s}秒`;
+};
+
+resvBtn.addEventListener("click", () => {
+  resvPanel.classList.toggle("open");
+  if (resvPanel.classList.contains("open")) { renderResvOptions(); renderResvList(); }
+});
+
+// 選択肢は現在中継中の会議(予約は当日のライブ視聴が前提)。編集中の選択はなるべく維持する
+function renderResvOptions() {
+  const prev = resvMeeting.value;
+  resvMeeting.innerHTML = "";
+  const live = [...tiles.values()];
+  if (!live.length) {
+    resvMeeting.innerHTML = `<option value="">中継中の会議がありません</option>`;
+    resvAdd.disabled = true;
+    return;
+  }
+  resvAdd.disabled = false;
+  for (const t of live) {
+    const s = t.stream;
+    const o = document.createElement("option");
+    o.value = s.id;
+    o.textContent = `${houseLabel(s.house)} ${s.time ?? ""} ${s.name}`.trim();
+    resvMeeting.appendChild(o);
+  }
+  if ([...resvMeeting.options].some((o) => o.value === prev)) resvMeeting.value = prev;
+}
+
+// +N分: 時刻入力を現在時刻+N分にセット
+for (const b of resvPanel.querySelectorAll(".mini")) {
+  b.addEventListener("click", () => {
+    const d = new Date(Date.now() + Number(b.dataset.min) * 60_000);
+    resvTime.value = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  });
+}
+
+resvAdd.addEventListener("click", async () => {
+  const id = resvMeeting.value;
+  const t = tiles.get(id);
+  if (!t || !resvTime.value) { showToast("⚠ 会議と時刻を指定してください"); return; }
+  const [hh, mm] = resvTime.value.split(":").map(Number);
+  const at = new Date(); at.setHours(hh, mm, 0, 0);
+  if (at.getTime() <= Date.now()) { showToast("⚠ 過去の時刻は予約できません"); return; }
+  const s = t.stream;
+  reservations.push({
+    rid: Date.now() + "-" + Math.random().toString(36).slice(2, 6),
+    id, house: s.house, label: `${s.time ?? ""} ${s.name}`.trim(),
+    at: at.getTime(), fired: false,
+  });
+  saveResv();
+  resvTime.value = "";
+  renderResvList();
+  updateResvBadge();
+  // 通知許可はユーザー操作のこのタイミングで要求する
+  if ("Notification" in window && Notification.permission === "default") {
+    try { await Notification.requestPermission(); } catch {}
+  }
+  showToast(`⏰ ${fmtClock(at.getTime())} に予約しました`);
+});
+
+function removeReservation(rid) {
+  reservations = reservations.filter((r) => r.rid !== rid);
+  saveResv();
+  renderResvList();
+  updateResvBadge();
+}
+
+function renderResvList() {
+  resvList.innerHTML = "";
+  for (const r of [...reservations].sort((a, b) => a.at - b.at)) {
+    const li = document.createElement("li");
+    if (r.fired) li.className = "fired";
+    const meta = document.createElement("div"); meta.className = "meta";
+    const t = document.createElement("span"); t.className = "t"; t.textContent = fmtClock(r.at);
+    const nm = document.createElement("span"); nm.className = "nm"; nm.textContent = `${houseLabel(r.house)} ${r.label}`;
+    meta.append(t, nm);
+    const cd = document.createElement("span"); cd.className = "cd";
+    cd.textContent = r.fired ? "発動済み" : fmtCountdown(r.at - Date.now());
+    const del = document.createElement("span"); del.className = "del"; del.title = "削除"; del.textContent = "✕";
+    del.addEventListener("click", () => removeReservation(r.rid));
+    li.append(meta, cd, del);
+    resvList.appendChild(li);
+  }
+}
+
+function updateResvBadge() {
+  resvBtn.classList.toggle("has", reservations.some((r) => !r.fired));
+}
+
+let toastTimer = 0;
+function showToast(msg) {
+  toastEl.textContent = msg;
+  toastEl.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.classList.remove("show"), 3500);
+}
+
+// 予約発動の合図音(音声基盤が起動済みのときのみ)
+function beep() {
+  if (!actx) return;
+  try {
+    const o = actx.createOscillator(), g = actx.createGain();
+    o.type = "sine"; o.frequency.value = 880;
+    g.gain.setValueAtTime(0.0001, actx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.3, actx.currentTime + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, actx.currentTime + 0.6);
+    o.connect(g).connect(actx.destination);
+    o.start(); o.stop(actx.currentTime + 0.62);
+  } catch {}
+}
+
+function fireReservation(r) {
+  r.fired = true;
+  saveResv();
+  const t = tiles.get(r.id);
+  const name = `${houseLabel(r.house)} ${r.label}`;
+  if (t) {
+    focusedId = r.id;
+    manualFocus = true; // 発動後はASRの自動フォーカスにフォーカスを奪われないようにする
+    applyFocus();
+    t.el.classList.add("resv");
+    setTimeout(() => t.el.classList.remove("resv"), 6000);
+    showToast(`▶ 予約時刻です: ${name}`);
+  } else {
+    showToast(`⚠ 予約した会議が見つかりません: ${name}`);
+  }
+  beep();
+  if ("Notification" in window && Notification.permission === "granted") {
+    try { new Notification("shusantv 視聴予約", { body: `${fmtClock(r.at)} ${name}` }); } catch {}
+  }
+  renderResvList();
+  updateResvBadge();
+}
+
+// 5秒ごとに発動判定＋(パネル表示中は)カウントダウン更新
+setInterval(() => {
+  const now = Date.now();
+  for (const r of reservations) if (!r.fired && now >= r.at) fireReservation(r);
+  if (resvPanel.classList.contains("open")) renderResvList();
+}, 5000);
+updateResvBadge();
 
 // ---- タイル ----
 // サムネ(フォーカス時のプレビュー)用に時刻なし・「〜委員会/審査会」を削った短縮名も持たせる。
@@ -600,6 +830,7 @@ async function refresh() {
       t.el.classList.toggle("pending", !!s.pending);
     }
     relayout();
+    if (resvPanel.classList.contains("open")) renderResvOptions();
     statusEl.textContent =
       `${streams.length}件中継中 (衆${streams.filter(s=>s.house==="shugiin").length}/参${streams.filter(s=>s.house==="sangiin").length})` +
       ` 更新: ${new Date(updatedAt).toLocaleTimeString("ja-JP")}` +
