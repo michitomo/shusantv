@@ -12,6 +12,7 @@ on:
 permissions:
   contents: read
   pages: write
+  actions: write # schedule 自動停止の回避(下の Keep schedule alive)
   id-token: write
 
 concurrency:
@@ -36,3 +37,11 @@ jobs:
           path: public
       - id: deployment
         uses: actions/deploy-pages@v4
+      # 公開リポジトリは60日間コミットがないと schedule が自動停止される(disabled_inactivity)。
+      # 平日朝の初回 cron で enable API を叩き、無活動カウンタをリセットしておく
+      - name: Keep schedule alive
+        if: github.event.schedule == '45,50,55 23 * * 0-4'
+        continue-on-error: true
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/pages.yml/enable"
+        env:
+          GH_TOKEN: ${{ github.token }}

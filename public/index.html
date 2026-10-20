@@ -565,8 +565,8 @@ window.addEventListener("resize", relayout);
 
 // ---- 一覧取得 ----
 // 衆議院は m3u8 が CORS 開放されているためブラウザから全 room を直接プローブできる。
-// streams.json (Actions cron) が遅延していても開始直後の中継を拾う
-const SHU_ROOMS = Array.from({ length: 18 }, (_, i) => `room${String(i + 1).padStart(2, "0")}`);
+// streams.json (Actions cron) が遅延していても開始直後の中継を拾う。room00 は本会議
+const SHU_ROOMS = Array.from({ length: 19 }, (_, i) => `room${String(i).padStart(2, "0")}`);
 async function probeShugiin(known) {
   const found = [];
   await Promise.all(
@@ -575,7 +575,10 @@ async function probeShugiin(known) {
         const url = `https://hlslive.shugiintv.go.jp/${roomId}/amlst:${roomId}/playlist.m3u8`;
         const res = await fetch(url, { cache: "no-store" });
         if (res.ok && (await res.text()).includes("#EXTM3U"))
-          found.push({ house: "shugiin", id: roomId, name: `中継中 (${roomId})`, time: "", m3u8: url });
+          found.push({
+            house: "shugiin", id: roomId, time: "", m3u8: url,
+            name: roomId === "room00" ? "本会議" : `中継中 (${roomId})`,
+          });
       } catch {}
     })
   );
@@ -600,9 +603,11 @@ async function refresh() {
       t.el.classList.toggle("pending", !!s.pending);
     }
     relayout();
+    // 当日以外の一覧は日付も出す(cron 停止で古い streams.json が残っていても気づけるように)
+    const upd = new Date(updatedAt);
     statusEl.textContent =
       `${streams.length}件中継中 (衆${streams.filter(s=>s.house==="shugiin").length}/参${streams.filter(s=>s.house==="sangiin").length})` +
-      ` 更新: ${new Date(updatedAt).toLocaleTimeString("ja-JP")}` +
+      ` 更新: ${upd.toDateString() === new Date().toDateString() ? upd.toLocaleTimeString("ja-JP") : upd.toLocaleString("ja-JP")}` +
       (errors.length ? ` ⚠ ${errors.join("; ")}` : "");
     grid.querySelector(".empty")?.remove();
     if (!streams.length) grid.insertAdjacentHTML("beforeend", `<div class="empty">現在中継中の会議はありません</div>`);
