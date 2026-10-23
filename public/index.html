@@ -124,6 +124,8 @@
   #gate::before { content: "SHUSANTV"; font-size: 13px; font-weight: 800; letter-spacing: .3em; color: #9a9aa2; }
   #gate::after { content: "クリックで字幕には音声認識を使用します(初回はモデルをダウンロード)";
     font-size: 11px; color: #6a6a72; }
+  /* オンデバイス音声認識が無いブラウザ(Safari 等) */
+  body.noasr #gate::after { content: "字幕の音声認識は Chrome 139 以降のみ対応。このブラウザでは参議院の会議に公式字幕を表示します"; }
 </style>
 </head>
 <body>
@@ -150,17 +152,28 @@ const grid = document.getElementById("grid");
 const statusEl = document.getElementById("status");
 const tiles = new Map();
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+// オンデバイス音声認識(SpeechRecognition.available/processLocally + start(MediaStreamTrack))は Chrome 139+ のみ。
+// Safari は webkitSpeechRecognition があってもマイク入力しか取れない。さらに WebKit は HLS 再生中の video を
+// createMediaElementSource に繋いでも音声がグラフを素通りし GainNode が効かない(WebKit bug 180696)ので、
+// ASR が無い環境では WebAudio を一切使わず video.muted で音声を切り替え、字幕は参議院の公式字幕で代替する。
+// asrMode: null=ゲートクリック時に available() で判定 / true=WebAudio+ASR / false=muted切替+公式字幕
+let asrMode = SR && typeof SR.available === "function" ? null : false;
+const gate = document.getElementById("gate");
+if (asrMode === false) {
+  document.body.classList.add("noasr");
+  gate.textContent = "クリックで開始（音声の有効化）";
+}
 
 // ---- 音声基盤 ----
 // Chromeでは muted な video の音声キャプチャが無音になる既知バグがあるため、
 // video自体は常にunmuteし、WebAudioで「認識用(フル音声)」と「スピーカー(GainNode)」に分岐する。
 // AudioContextはユーザー操作後でないと動かないので初回クリックのゲートを置く。
 let actx = null;
-document.getElementById("gate").addEventListener("click", async function () {
-  actx = new AudioContext();
+gate.addEventListener("click", async function () {
   this.remove();
-  // オンデバイス認識のja-JP利用権はオリジン単位。未取得ならこのオリジン用にinstallしてから始める
-  if (SR?.available) {
+  if (asrMode === null) {
+    actx = new AudioContext(); // ユーザー操作の同期区間で作っておく(判定で不要になれば閉じる)
+    // オンデバイス認識のja-JP利用権はオリジン単位。未取得ならこのオリジン用にinstallしてから始める
     try {
       let a = await SR.available({ langs: ["ja-JP"], processLocally: true });
       if (a === "downloadable") {
@@ -168,11 +181,20 @@ document.getElementById("gate").addEventListener("click", async function () {
         await SR.install({ langs: ["ja-JP"], processLocally: true });
         a = await SR.available({ langs: ["ja-JP"], processLocally: true });
       }
-      if (a !== "available") statusEl.textContent = `⚠ オンデバイス音声認識が使えません (${a})`;
-    } catch (e) { statusEl.textContent = `⚠ ASR初期化: ${e}`; }
+      asrMode = a === "available";
+      if (!asrMode) statusEl.textContent = `⚠ オンデバイス音声認識が使えません (${a})。参議院は公式字幕で代替します`;
+    } catch (e) { asrMode = false; statusEl.textContent = `⚠ ASR初期化: ${e}`; }
+    if (!asrMode) { actx.close(); actx = null; }
   }
-  for (const t of tiles.values()) initAudio(t);
+  for (const t of tiles.values()) setupCaptions(t);
 });
+
+// タイルの字幕・音声経路を asrMode に応じて用意する(判定前は何もしない。各経路とも再呼び出しは無害)
+function setupCaptions(t) {
+  if (asrMode === null) return;
+  if (asrMode) initAudio(t);
+  else if (t.stream.house === "sangiin") attachVtt(t);
+}
 
 function initAudio(t) {
   if (!actx || t.audio) return;
@@ -182,37 +204,28 @@ function initAudio(t) {
   gain.gain.value = 0;
   src.connect(gain).connect(actx.destination);
   t.audio = { src, gain };
-  if (SR) startAsr(t); // 衆参とも同じASR字幕(参院公式字幕は検出用に裏で併用)
+  startAsr(t); // 衆参とも同じASR字幕
 }
 
-// ---- 衆議院: ブラウザ内蔵オンデバイス音声認識 ----
-// 注意: SODA(SpeechRecognition.install)導入直後はChrome完全再起動が必要。
-// 未ロードだと "network" エラーで即終了する(Chrome 149時点の誤報告, crbug 520350511)
-function startAsr(t) {
-  const dest = actx.createMediaStreamDestination();
-  t.audio.src.connect(dest);
-  const rec = new SR();
-  rec.lang = "ja-JP";
-  rec.continuous = true;
-  rec.interimResults = true;
-  rec.processLocally = true;
-  applyPhrases(rec); // コンテキストバイアシング(ウォッチ語を優先語彙に)
+// ---- 字幕バブル ----
+// 直近FADE ms以内に出た文字だけ明色、それ以前はグレー。改行なし(自然折り返しのみ)。
+// ASR(認識セッションの全文を set)と参議院の公式字幕(cue を append)の両方から使う
+function createCaption(t) {
   const asrEl = t.el.querySelector(".asr");
-  let errors = 0;
-  let brightBase = 0; // この文字位置までは「古い」= グレー表示
-  let marks = [];     // [文字位置, 時刻] 新しい文字の出現記録(時間フェード用)
   const FADE = 500, TS = "\u2009";
   const IDLE_HIDE = 30_000; // 新しい発言が来なければ字幕を消す(散会後に残さない)
+  const KEEP = 600;         // append で溜める上限文字数(表示は末尾150字のみ)
+  let full = "";
+  let brightBase = 0; // この文字位置までは「古い」= グレー表示
+  let marks = [];     // [文字位置, 時刻] 新しい文字の出現記録(時間フェード用)
   let lastGrowth = 0;
 
-  // 直近FADE ms以内に出た文字だけ明色、それ以前はグレー。改行なし(自然折り返しのみ)
-  let lastFull = "";
   function render() {
     const now = performance.now();
     if (lastGrowth && now - lastGrowth > IDLE_HIDE) { asrEl.innerHTML = ""; return; }
     for (const [len, tm] of marks) if (now - tm > FADE) brightBase = Math.max(brightBase, len);
     marks = marks.filter(([, tm]) => now - tm <= FADE);
-    const text = lastFull.slice(-150); // 表示は末尾のみ(3行高でクリップされる)
+    const text = full.slice(-150); // 表示は末尾のみ(3行高でクリップされる)
     asrEl.innerHTML = "";
     if (!text) return;
     const b = document.createElement("div");
@@ -220,7 +233,7 @@ function startAsr(t) {
     const inner = document.createElement("div"); // flex(下端寄せ)の単一子要素
     const phrases = window.budouxParser ? window.budouxParser.parse(text) : [text];
     const oldParts = [], newParts = [];
-    let pos = lastFull.length - text.length;
+    let pos = full.length - text.length;
     for (const ph of phrases) {
       (pos + ph.length <= brightBase ? oldParts : newParts).push(ph);
       pos += ph.length;
@@ -239,20 +252,59 @@ function startAsr(t) {
     b.appendChild(inner);
     asrEl.appendChild(b);
   }
-  t.capTimer = setInterval(render, 200); // 結果が来なくてもフェードを進める
-  // ポーズ(isFinal)ごとに句読点を補う: 文末形なら「。」、続きそうなら「、」
-  const punct = (s) =>
-    !s || /[。、．，！？!?]$/.test(s) ? s
-    : /(です|ます|でした|ました|ません|ございます|であります)(ね|よ)?$/.test(s) ? s + "。"
-    : s + "、";
+  const timer = setInterval(render, 200); // 結果が来なくてもフェードを進める
+
+  function set(text) {
+    if (text.length < full.length) { brightBase = 0; marks = []; } // セッション再開でリセット
+    if (text.length > full.length) { marks.push([full.length, performance.now()]); lastGrowth = performance.now(); }
+    full = text;
+    render();
+  }
+  return {
+    el: asrEl,
+    set,
+    // 末尾に追記。溜まりすぎたら先頭を切り詰め、位置情報も詰める(リセット扱いにしない)
+    append(text) {
+      let next = full + text;
+      if (next.length > KEEP * 2) {
+        const cut = next.length - KEEP;
+        full = full.slice(cut);
+        next = next.slice(cut);
+        brightBase = Math.max(0, brightBase - cut);
+        marks = marks.map(([len, tm]) => [Math.max(0, len - cut), tm]);
+      }
+      set(next);
+    },
+    tail: (n) => full.slice(-n),
+    stop() { clearInterval(timer); },
+  };
+}
+// ポーズ(isFinal)や字幕cueの末尾に句読点を補う: 文末形なら「。」、続きそうなら「、」
+const punct = (s) =>
+  !s || /[。、．，！？!?]$/.test(s) ? s
+  : /(です|ます|でした|ました|ません|ございます|であります)(ね|よ)?$/.test(s) ? s + "。"
+  : s + "、";
+
+// ---- 衆参共通: ブラウザ内蔵オンデバイス音声認識 (Chrome 139+) ----
+// 注意: SODA(SpeechRecognition.install)導入直後はChrome完全再起動が必要。
+// 未ロードだと "network" エラーで即終了する(Chrome 149時点の誤報告, crbug 520350511)
+function startAsr(t) {
+  const dest = actx.createMediaStreamDestination();
+  t.audio.src.connect(dest);
+  const rec = new SR();
+  rec.lang = "ja-JP";
+  rec.continuous = true;
+  rec.interimResults = true;
+  rec.processLocally = true;
+  applyPhrases(rec); // コンテキストバイアシング(ウォッチ語を優先語彙に)
+  const cap = t.cap ?? (t.cap = createCaption(t));
+  const asrEl = cap.el;
+  let errors = 0;
   rec.onresult = (e) => {
     let full = "";
     for (const r of e.results) full += r.isFinal ? punct(r[0].transcript) : r[0].transcript;
-    if (full.length < lastFull.length) { brightBase = 0; marks = []; } // セッション再開でリセット
-    if (full.length > lastFull.length) { marks.push([lastFull.length, performance.now()]); lastGrowth = performance.now(); }
-    lastFull = full;
-    render();
-    detect(t, full.slice(-100));
+    cap.set(full);
+    detect(t, cap.tail(100));
     errors = 0;
   };
   rec.onerror = async (e) => {
@@ -275,6 +327,43 @@ function startAsr(t) {
   rec.onend = () => setTimeout(start, 1000);
   start();
   t.rec = rec;
+}
+
+// ---- 参議院: 公式字幕 (HLS の WebVTT トラック) ----
+// オンデバイス音声認識が無いブラウザ(Safari 等)向け。hls.js に字幕トラックを選択させると
+// (subtitleDisplay:false なので)非表示の TextTrack に cue が積まれるので、cuechange で
+// 字幕バブルとウォッチ検出に流す。衆議院の中継には字幕トラックが無い
+function attachVtt(t) {
+  if (t.vtt) return;
+  const { hls, video } = t;
+  const cap = t.cap ?? (t.cap = createCaption(t));
+  const vtt = (t.vtt = { seen: new WeakSet(), lastText: "", lastEnd: -Infinity });
+  const onCues = (track) => {
+    for (const cue of Array.from(track.activeCues ?? [])) {
+      if (vtt.seen.has(cue)) continue;
+      vtt.seen.add(cue);
+      const text = String(cue.text ?? "").replace(/\s*\n\s*/g, "").trim();
+      if (!text) continue;
+      // 同じ字幕がセグメント境界で開始時刻ズレで再掲されるため、直前と同文で近接なら捨てる
+      if (text === vtt.lastText && cue.startTime - vtt.lastEnd <= 6) { vtt.lastEnd = Math.max(vtt.lastEnd, cue.endTime); continue; }
+      vtt.lastText = text;
+      vtt.lastEnd = cue.endTime;
+      cap.append(punct(text));
+      detect(t, cap.tail(100));
+    }
+  };
+  const hooked = new WeakSet();
+  const hook = (track) => {
+    if (hooked.has(track) || (track.kind !== "subtitles" && track.kind !== "captions")) return;
+    hooked.add(track);
+    track.addEventListener("cuechange", () => onCues(track));
+  };
+  for (const track of Array.from(video.textTracks)) hook(track);
+  video.textTracks.addEventListener("addtrack", (e) => hook(e.track));
+  // マニフェストに字幕トラックがあれば選択する(解析済みなら即時、未解析なら更新イベントで)
+  const select = () => { if (hls.subtitleTracks.length && hls.subtitleTrack < 0) hls.subtitleTrack = 0; };
+  hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, select);
+  select();
 }
 
 // ---- ウォッチリスト検出 (衆: ASRテキスト / 参: 公式字幕cue) ----
@@ -404,14 +493,14 @@ function makeTile(s) {
   el.addEventListener("click", () => clickTile(s.id));
   grid.appendChild(el);
   tiles.set(s.id, t);
-  initAudio(t);
+  setupCaptions(t);
 }
 
 function removeTile(id) {
   const t = tiles.get(id);
   if (!t) return;
   if (t.rec) { t.rec.onend = null; t.rec.stop(); }
-  if (t.capTimer) clearInterval(t.capTimer);
+  t.cap?.stop();
   t.hls.destroy();
   t.el.remove();
   tiles.delete(id);
@@ -436,7 +525,11 @@ function applyFocus() {
   for (const [tid, t] of tiles) {
     const on = tid === focusedId;
     if (t.audio) t.audio.gain.gain.value = on ? 1 : 0;
-    else t.video.muted = !on; // ゲート前のフォールバック
+    else {
+      // WebAudio を使わない経路(ASR 無し / ゲート前)。Safari は gesture 外の unmute で一時停止することがあるので play() で起こす
+      t.video.muted = !on;
+      if (on && t.video.paused) t.video.play().catch(() => {});
+    }
     t.el.classList.toggle("unmuted", on);
     t.el.querySelector(".muteicon").textContent = on ? "🔊" : "🔇";
     t.hls.nextLevel = on || allHigh ? t.highest : t.lowest;
