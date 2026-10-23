@@ -44,7 +44,7 @@ flowchart LR
 | 開催中の会議一覧 | サーバーで常時スクレイピング | Actions cron（平日 8:45〜18:55 JST, 5 分毎）がスクレイピング → `streams.json` を焼いて Pages にデプロイ |
 | cron の隙間（開始直後）を拾う | — | 衆議院の m3u8 は CORS 開放なので、ブラウザから `room00〜18` を直接プローブ |
 | 映像再生 | プロキシ / 再配信 | 両院 CDN が CORS 開放なので hls.js で直接再生。フォーカス以外は最低画質、帯域に余裕があれば全部 HD |
-| 字幕 | 音声認識サーバー | Chrome の `SpeechRecognition` を `processLocally` で動かしブラウザ内認識。無料・遅延小 |
+| 字幕 | 音声認識サーバー | Chrome の `SpeechRecognition` を `processLocally` で動かしブラウザ内認識。無料・遅延小。非対応ブラウザ（Safari 等）は参議院タイルだけ公式字幕（WebVTT）で代替 |
 | 文字起こし | バックエンドで字幕収集 | 参議院 HLS の字幕トラック（WebVTT）を 96 並列で直接取得。Cache Storage で永続キャッシュ |
 | AI 要約 | API キーをサーバーで保持 | BYOK。キーは localStorage、ブラウザ → OpenRouter に直送 |
 | 状態保存 | DB | localStorage（ウォッチリスト・鍵・要約キャッシュ） |
@@ -144,6 +144,7 @@ node server.js      # http://localhost:8787（streams.json はリクエスト時
 
 ## 制約・注意
 
-- **字幕・ウォッチ検出は Chrome 限定**（オンデバイス `SpeechRecognition` と `SpeechRecognitionPhrase` が必要）。初回は日本語パックをダウンロードし、直後は Chrome の完全再起動が要ることがある
+- **音声認識による字幕は Chrome 139 以降限定**（オンデバイス `SpeechRecognition` と `SpeechRecognitionPhrase` が必要）。初回は日本語パックをダウンロードし、直後は Chrome の完全再起動が要ることがある
+- **Safari 等の非対応ブラウザ**では WebAudio を使わず `video.muted` で音声を切り替え、字幕とウォッチ検出は参議院タイルの公式字幕のみで動く。WebKit は HLS 再生中の video を Web Audio に繋いでも GainNode が効かない（[WebKit Bug 180696](https://bugs.webkit.org/show_bug.cgi?id=180696)）ため
 - 文字起こし・AI 要約は **参議院のみ**（公式字幕があるのは 2024 年 8 月以降の中継）
 - 映像・字幕の著作権は各議院に帰属。本サイトは非公式の個人用ビューアで、字幕付き映像・字幕の転載は禁止されている
