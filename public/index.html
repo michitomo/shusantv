@@ -156,10 +156,10 @@ const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 // Safari は webkitSpeechRecognition があってもマイク入力しか取れない。さらに WebKit は HLS 再生中の video を
 // createMediaElementSource に繋いでも音声がグラフを素通りし GainNode が効かない(WebKit bug 180696)ので、
 // ASR が無い環境では WebAudio を一切使わず video.muted で音声を切り替え、字幕は参議院の公式字幕で代替する。
-// asrMode: null=ゲートクリック時に available() で判定 / true=WebAudio+ASR / false=muted切替+公式字幕
-let asrMode = SR && typeof SR.available === "function" ? null : false;
+// 判定は API の有無だけで行い、Chrome の挙動(available() の結果に関わらず ASR を試みる)は従来どおり
+const asrMode = !!(SR && typeof SR.available === "function"); // true=WebAudio+ASR / false=muted切替+公式字幕
 const gate = document.getElementById("gate");
-if (asrMode === false) {
+if (!asrMode) {
   document.body.classList.add("noasr");
   gate.textContent = "クリックで開始（音声の有効化）";
 }
@@ -170,10 +170,10 @@ if (asrMode === false) {
 // AudioContextはユーザー操作後でないと動かないので初回クリックのゲートを置く。
 let actx = null;
 gate.addEventListener("click", async function () {
+  if (asrMode) actx = new AudioContext();
   this.remove();
-  if (asrMode === null) {
-    actx = new AudioContext(); // ユーザー操作の同期区間で作っておく(判定で不要になれば閉じる)
-    // オンデバイス認識のja-JP利用権はオリジン単位。未取得ならこのオリジン用にinstallしてから始める
+  // オンデバイス認識のja-JP利用権はオリジン単位。未取得ならこのオリジン用にinstallしてから始める
+  if (asrMode) {
     try {
       let a = await SR.available({ langs: ["ja-JP"], processLocally: true });
       if (a === "downloadable") {
@@ -181,17 +181,14 @@ gate.addEventListener("click", async function () {
         await SR.install({ langs: ["ja-JP"], processLocally: true });
         a = await SR.available({ langs: ["ja-JP"], processLocally: true });
       }
-      asrMode = a === "available";
-      if (!asrMode) statusEl.textContent = `⚠ オンデバイス音声認識が使えません (${a})。参議院は公式字幕で代替します`;
-    } catch (e) { asrMode = false; statusEl.textContent = `⚠ ASR初期化: ${e}`; }
-    if (!asrMode) { actx.close(); actx = null; }
+      if (a !== "available") statusEl.textContent = `⚠ オンデバイス音声認識が使えません (${a})`;
+    } catch (e) { statusEl.textContent = `⚠ ASR初期化: ${e}`; }
   }
   for (const t of tiles.values()) setupCaptions(t);
 });
 
-// タイルの字幕・音声経路を asrMode に応じて用意する(判定前は何もしない。各経路とも再呼び出しは無害)
+// タイルの字幕・音声経路を用意する(ASR あり: ゲート前は actx が無いので何もしない。各経路とも再呼び出しは無害)
 function setupCaptions(t) {
-  if (asrMode === null) return;
   if (asrMode) initAudio(t);
   else if (t.stream.house === "sangiin") attachVtt(t);
 }
