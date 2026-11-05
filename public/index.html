@@ -147,6 +147,7 @@
 import { loadDefaultJapaneseParser } from "https://cdn.jsdelivr.net/npm/budoux@0.6.2/+esm";
 window.budouxParser = loadDefaultJapaneseParser();
 </script>
+<script src="listing.js"></script>
 <script>
 const grid = document.getElementById("grid");
 const statusEl = document.getElementById("status");
@@ -655,7 +656,8 @@ window.addEventListener("resize", relayout);
 
 // ---- 一覧取得 ----
 // 衆議院は m3u8 が CORS 開放されているためブラウザから全 room を直接プローブできる。
-// streams.json (Actions cron) が遅延していても開始直後の中継を拾う。room00 は本会議
+// streams.json が遅延していても開始直後の中継を拾う。委員会名は部屋番号から作らない
+// （同じ room が日によって別委員会になる。room00 だけ本会議場なので仮名にできる）。
 const SHU_ROOMS = Array.from({ length: 19 }, (_, i) => `room${String(i).padStart(2, "0")}`);
 async function probeShugiin(known) {
   const found = [];
@@ -667,7 +669,7 @@ async function probeShugiin(known) {
         if (res.ok && (await res.text()).includes("#EXTM3U"))
           found.push({
             house: "shugiin", id: roomId, time: "", m3u8: url,
-            name: roomId === "room00" ? "本会議" : `中継中 (${roomId})`,
+            name: shusantvListing.fallbackShugiinName(roomId),
           });
       } catch {}
     })
@@ -677,9 +679,13 @@ async function probeShugiin(known) {
 
 async function refresh() {
   try {
-    const { streams, updatedAt, errors } = await (await fetch("streams.json" + location.search, { cache: "no-store" })).json();
-    if (!location.search.includes("demo")) {
-      const knownRooms = new Set(streams.map((s) => s.id));
+    const data = await (await fetch("streams.json" + location.search, { cache: "no-store" })).json();
+    const { updatedAt, errors = [] } = data;
+    const demo = location.search.includes("demo");
+    const namesCurrent = demo || shusantvListing.listingCurrent(data);
+    const streams = demo ? (data.streams ?? []) : shusantvListing.streamsForGrid(data);
+    if (!demo) {
+      const knownRooms = new Set(streams.filter((s) => s.house === "shugiin").map((s) => s.id));
       streams.push(...(await probeShugiin(knownRooms)));
     }
     const ids = new Set(streams.map((s) => s.id));
@@ -695,9 +701,14 @@ async function refresh() {
     relayout();
     // 当日以外の一覧は日付も出す(cron 停止で古い streams.json が残っていても気づけるように)
     const upd = new Date(updatedAt);
+    const sameDay = updatedAt && shusantvListing.jstDay(upd) === shusantvListing.jstDay(new Date());
+    const stamp = sameDay
+      ? upd.toLocaleTimeString("ja-JP", { timeZone: "Asia/Tokyo" })
+      : upd.toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" });
     statusEl.textContent =
       `${streams.length}件中継中 (衆${streams.filter(s=>s.house==="shugiin").length}/参${streams.filter(s=>s.house==="sangiin").length})` +
-      ` 更新: ${upd.toDateString() === new Date().toDateString() ? upd.toLocaleTimeString("ja-JP") : upd.toLocaleString("ja-JP")}` +
+      ` 更新: ${stamp}` +
+      (namesCurrent ? "" : " （一覧が古いため委員会名は公式一覧の再取得待ち）") +
       (errors.length ? ` ⚠ ${errors.join("; ")}` : "");
     grid.querySelector(".empty")?.remove();
     if (!streams.length) grid.insertAdjacentHTML("beforeend", `<div class="empty">現在中継中の会議はありません</div>`);

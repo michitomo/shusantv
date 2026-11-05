@@ -41,14 +41,14 @@ flowchart LR
 
 | やりたいこと | 普通のやり方 | shusantv の工夫 |
 |---|---|---|
-| 開催中の会議一覧 | サーバーで常時スクレイピング | Actions cron（平日 8:45〜18:55 JST, 5 分毎）がスクレイピング → `streams.json` を焼いて Pages にデプロイ |
+| 開催中の会議一覧 | サーバーで常時スクレイピング | Actions cron（平日 8:47〜18:57 JST, 約5分毎）がスクレイピング → `streams.json` を焼いて Pages にデプロイ |
 | cron の隙間（開始直後）を拾う | — | 衆議院の m3u8 は CORS 開放なので、ブラウザから `room00〜18` を直接プローブ |
 | 映像再生 | プロキシ / 再配信 | 両院 CDN が CORS 開放なので hls.js で直接再生。フォーカス以外は最低画質、帯域に余裕があれば全部 HD |
 | 字幕 | 音声認識サーバー | Chrome の `SpeechRecognition` を `processLocally` で動かしブラウザ内認識。無料・遅延小。非対応ブラウザ（Safari 等）は参議院タイルだけ公式字幕（WebVTT）で代替 |
 | 文字起こし | バックエンドで字幕収集 | 参議院 HLS の字幕トラック（WebVTT）を 96 並列で直接取得。Cache Storage で永続キャッシュ |
 | AI 要約 | API キーをサーバーで保持 | BYOK。キーは localStorage、ブラウザ → OpenRouter に直送 |
 | 状態保存 | DB | localStorage（ウォッチリスト・鍵・要約キャッシュ） |
-| cron の自動停止（60 日無コミットで止まる） | — | 平日朝の cron で `workflows/enable` API を叩いて無活動カウンタをリセット |
+| cron の自動停止（60 日無コミットで止まる） | — | 平日朝の cron が `.github/schedule-keepalive` をコミットして活動にする。enable API は停止の解除だけで、カウントは戻らない |
 
 ## 中継グリッドの中身
 
@@ -125,6 +125,7 @@ server.js                    ローカル用（スクレイプ + 静的配信 + 
 ```jsonc
 {
   "updatedAt": "2026-10-23T01:05:00.000Z",
+  "sessionDate": "2026-10-23",
   "streams": [
     { "house": "shugiin", "id": "room01", "name": "予算委員会", "time": "9:00", "m3u8": "https://hlslive.shugiintv.go.jp/room01/amlst:room01/playlist.m3u8" },
     { "house": "sangiin", "id": "sid1234", "name": "厚生労働委員会", "time": "10:00", "pending": false, "m3u8": "...", "channelInfo": "..." }

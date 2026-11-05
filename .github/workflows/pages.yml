@@ -2,17 +2,20 @@ name: scrape-and-deploy
 
 on:
   schedule:
-    # JST 平日 8:45〜18:55 に5分間隔 (UTC 23:45〜09:55)。cron遅延は許容
-    - cron: "45,50,55 23 * * 0-4"
-    - cron: "*/5 0-9 * * 1-5"
+    # JST 平日 8:47〜18:57 に約5分間隔 (UTC)。正時を外して cron の遅延を避ける。
+    # 式そのものを変えると、止まった schedule の再登録になる。
+    - cron: "47,52,57 23 * * 0-4"
+    - cron: "2,7,12,17,22,27,32,37,42,47,52,57 0-9 * * 1-5"
   workflow_dispatch:
   push:
     branches: [main]
+    paths-ignore:
+      - ".github/schedule-keepalive"
 
 permissions:
-  contents: read
+  contents: write # 平日朝に活動記録をコミットして 60 日無活動の schedule 停止を防ぐ
   pages: write
-  actions: write # schedule 自動停止の回避(下の Keep schedule alive)
+  actions: write
   id-token: write
 
 concurrency:
@@ -27,6 +30,11 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      - name: Re-enable schedule if GitHub disabled it
+        continue-on-error: true
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/pages.yml/enable"
+        env:
+          GH_TOKEN: ${{ github.token }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -37,11 +45,21 @@ jobs:
           path: public
       - id: deployment
         uses: actions/deploy-pages@v4
-      # 公開リポジトリは60日間コミットがないと schedule が自動停止される(disabled_inactivity)。
-      # 平日朝の初回 cron で enable API を叩き、無活動カウンタをリセットしておく
+      # 公開リポジトリは60日間コミットがないと schedule が自動停止される。
+      # enable API は停止を解除するだけで、無活動のカウントは戻らない。
+      # 平日朝に日付ファイルをコミットし、次回の60日をリセットする。
       - name: Keep schedule alive
-        if: github.event.schedule == '45,50,55 23 * * 0-4'
+        if: github.event_name == 'schedule' && github.event.schedule == '47,52,57 23 * * 0-4'
         continue-on-error: true
-        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/pages.yml/enable"
-        env:
-          GH_TOKEN: ${{ github.token }}
+        run: |
+          today=$(TZ=Asia/Tokyo date +%F)
+          stamp=".github/schedule-keepalive"
+          if [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$today" ]; then
+            exit 0
+          fi
+          echo "$today" > "$stamp"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$stamp"
+          git commit -m "chore: keep scheduled scrape alive ($today)"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
