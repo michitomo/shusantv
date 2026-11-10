@@ -13,6 +13,15 @@
 | `transcript.html` 文字起こし | 参議院の公式字幕（WebVTT）を全文表示・検索・TXT/VTT 保存。BYOK（OpenRouter）で質疑応答カード形式の AI 要約 |
 | `asr-test.html` | オンデバイス音声認識の動作検証用 |
 
+### 視聴中の字幕履歴
+
+音声を出しているタイルでは、字幕を上へスクロールすると追尾を止めて過去を読めます。新しい本文が届いた段落数と「ライブに戻る」を表示し、復帰すると最新を追います。タイルを切り替えたプレビューは最新表示に戻ります。タイル選択はクリックまたは Enter / Space、字幕欄はキーボードでもスクロールできます。
+
+- 履歴は各タイルで視聴した字幕の最大2,000件だけをメモリに保持します。リロード・タイル削除・配信URL変更で消え、端末への保存や会議横断検索はありません。
+- ASRの途中結果は上書きし、確定文だけを再起動後も残します。新しい本文が約3秒届かずに次の認識結果が来たら段落を分けます。同じ途中結果への訂正・確定は段落を増やしません。
+- 停止・バッファ待ち・シーク・認識再起動は発言の間として数えません。公式字幕は受信間隔でなく字幕の開始・終了時刻を使います。話者交代や実際の無音を判定する機能ではなく、認識遅延による誤分割・分割漏れはあります。
+- 音声認識の対応環境は従来どおりです。非対応ブラウザでは参院の公式字幕のみ。画面幅への対応と実機の音声認識可否は別です。
+
 ## アーキテクチャ
 
 ```mermaid
@@ -71,7 +80,7 @@ flowchart LR
   V["video タイル（常に unmute）"] --> SRC["MediaElementSource"]
   SRC --> G["GainNode（フォーカス時のみ 1）"] --> OUT["🔊 スピーカー"]
   SRC --> D["MediaStreamDestination"] --> SR["SpeechRecognition processLocally"]
-  SR --> B["字幕バブル（BudouX で文節区切り）"]
+  SR --> B["字幕履歴（間で段落化・最新追尾）"]
   SR --> W{"ウォッチ語に fuzzy 一致?"}
   W -->|hit| T["タリー ON AIR + 自動フォーカス（90秒）"]
 ```
@@ -129,6 +138,7 @@ public/                      ← そのまま Pages にデプロイ
   transcript.html            文字起こし・AI 要約
   transcript-loader.js       最新優先の取得キュー・時系列統合
   sangiin-discovery.js        参院CDNの早期検知・一覧統合
+  caption-history.js          視聴中字幕の途中結果・段落・認識再起動管理
   asr-test.html              音声認識の検証
   streams.json               Actions が生成（gitignore）
 lib/scrape.mjs               衆参スクレイパ（Actions と server.js で共用）
@@ -167,7 +177,7 @@ node server.js      # http://localhost:8787（streams.json はリクエスト時
 node --test lib/*.test.mjs
 ```
 
-UI 回帰テストは fixture とシナリオを共用する。DOM モードはスクロール・要約も検証し、Chromium モードは一覧・選択・動画タイルを検証する。外部通信・映像はモックし、実放送や音声認識には接続しない。
+UI 回帰テストは fixture とシナリオを共用する。DOM モードはスクロール・要約・字幕履歴・ASR/VTTライフサイクルも検証し、Chromium モードは一覧・選択・動画タイルを検証する。外部通信・映像はモックし、実放送や音声認識には接続しない。
 
 ```sh
 npm install --no-save linkedom playwright

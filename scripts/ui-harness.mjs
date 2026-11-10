@@ -4,7 +4,7 @@ import { webcrypto } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { createFixture, HlsMock, publicFile } from './ui-fixture.mjs';
 const require = createRequire(import.meta.url);
-export async function createHarness(browserMode = false) {
+export async function createHarness(browserMode = false, { captionMedia = true, asr = false } = {}) {
   const fixture = createFixture(), { state } = fixture, errors = [];
   const browser = browserMode ? await require('playwright').chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_PATH, args: ['--no-sandbox'] }) : null;
   async function open(file, search = '') {
@@ -47,6 +47,50 @@ export async function createHarness(browserMode = false) {
       return { top: index * 34 - sandbox.scrollY, bottom: (index + 1) * 34 - sandbox.scrollY, height: 34, width: 800 };
     };
     Object.defineProperty(document.body, 'scrollHeight', { get: () => document.querySelectorAll('.cue').length * 34 + 200 });
+    // DOM media/caption mocks: no real playback, layout, or recognition.
+    if (captionMedia) {
+      const media = new WeakMap();
+      const mediaState = video => {
+        if (!media.has(video)) {
+          const target = document.createElement('span'), tracks = [];
+          tracks.addEventListener = target.addEventListener.bind(target);
+          tracks.removeEventListener = target.removeEventListener.bind(target);
+          tracks.dispatchEvent = target.dispatchEvent.bind(target);
+          media.set(video, { paused: false, tracks });
+        }
+        return media.get(video);
+      };
+      Object.defineProperties(dom.HTMLElement.prototype, {
+        paused: { configurable: true, get() { return mediaState(this).paused; } },
+        textTracks: { configurable: true, get() { return mediaState(this).tracks; } },
+      });
+      dom.HTMLElement.prototype.play = function () { mediaState(this).paused = false; this.dispatchEvent(new dom.Event('playing')); return Promise.resolve(); };
+      dom.HTMLElement.prototype.pause = function () { mediaState(this).paused = true; this.dispatchEvent(new dom.Event('pause')); };
+      sandbox.performance = { now: () => state.now };
+      sandbox.makeCaptionTrack = () => {
+        const track = document.createElement('span');
+        track.kind = 'subtitles'; track.activeCues = [];
+        track.emit = cues => { track.activeCues = cues; track.dispatchEvent(new dom.Event('cuechange')); };
+        return track;
+      };
+      if (asr) {
+        sandbox.SpeechRecognition = class {
+          static instances = [];
+          static async available() { return 'available'; }
+          constructor() { this.constructor.instances.push(this); }
+          start(track) { this.track = track; }
+          abort() { this.aborted = true; this.onend?.(); }
+          emit(results) { this.onresult?.({ results: results.map(([text, final = false]) => Object.assign([{ transcript: text }], { isFinal: final })) }); }
+        };
+        const node = () => ({ gain: { value: 0 }, connect(target) { return target; }, disconnect() { this.disconnected = true; } });
+        sandbox.AudioContext = class {
+          destination = node();
+          createMediaElementSource() { return node(); }
+          createGain() { return node(); }
+          createMediaStreamDestination() { const track = { kind: 'audio', stop() { this.stopped = true; } }; return { ...node(), stream: { getAudioTracks: () => [track] } }; }
+        };
+      }
+    }
     sandbox.window = sandbox;
     const context = vm.createContext(sandbox);
     for (const [, attributes, inline] of html.matchAll(/<script([^>]*)>([\s\S]*?)<\/script>/g)) {

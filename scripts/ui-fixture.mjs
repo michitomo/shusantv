@@ -6,6 +6,7 @@ export class HlsMock {
   static Events = { MANIFEST_PARSED: 'manifest', LEVEL_SWITCHED: 'level', ERROR: 'error', SUBTITLE_TRACKS_UPDATED: 'subs' };
   constructor() { this.sources = []; this.events = {}; this.levels = [{ bitrate: 300000 }]; this.subtitleTracks = []; this.subtitleTrack = -1; }
   on(event, callback) { this.events[event] = callback; }
+  off(event) { delete this.events[event]; }
   loadSource(url) { this.sources.push(url); }
   attachMedia() {}
   destroy() { this.destroyed = true; }

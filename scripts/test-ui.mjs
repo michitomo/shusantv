@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { createHarness } from './ui-harness.mjs';
 import { delay } from './ui-fixture.mjs';
+import { runCaptionTests } from './test-captions.mjs';
 const browserMode = process.argv.includes('--browser');
 const harness = await createHarness(browserMode), { state } = harness;
 let page;
@@ -48,6 +49,7 @@ try {
   page = await harness.open('index.html');
   await until("document.querySelector('.tile') !== null");
   await check("document.querySelectorAll('.tile').length", 1);
+  if (!browserMode) await check('!!tiles.get("sid9456").stopCaptions');
   // LinkeDOM has no media playback; Chromium exercises the actual focus click handler.
   await page.eval(browserMode ? 'clickTile("sid9456")' : 'focusedId="sid9456"');
   await page.eval('window.originalTile=tiles.get("sid9456");');
@@ -113,3 +115,5 @@ try {
   }
   assert.deepEqual(harness.errors, []);
 } finally { await page?.close(); await harness.close(); }
+
+if (!browserMode) await runCaptionTests();
