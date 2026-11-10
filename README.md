@@ -167,15 +167,14 @@ node server.js      # http://localhost:8787（streams.json はリクエスト時
 node --test lib/*.test.mjs
 ```
 
-追加の DOM / ブラウザ回帰テストは外部通信をモックする（実放送・音声認識・実映像再生の試験ではない）。
+UI 回帰テストは fixture とシナリオを共用する。DOM モードはスクロール・要約も検証し、Chromium モードは一覧・選択・動画タイルを検証する。外部通信・映像はモックし、実放送や音声認識には接続しない。
 
 ```sh
 npm install --no-save linkedom playwright
-node scripts/test-dom.mjs
-node scripts/test-transcript-dom.mjs
+node scripts/test-ui.mjs
 # Chromiumを別途用意。必要に応じて CHROMIUM_PATH を指定する
 npx playwright install chromium
-node scripts/test-browser.mjs
+node scripts/test-ui.mjs --browser
 ```
 
 ## 制約・注意

@@ -158,10 +158,6 @@ const SEG_CONCURRENCY = (() => {
 })();
 const LIVE_POLL_MS = 15_000;
 
-// ?debug=1 でボトルネック分析ログを出す
-const DEBUG = new URLSearchParams(location.search).has("debug");
-const dlog = (...a) => { if (DEBUG) console.log("%c[shusantv]", "color:#5fe0b7", ...a); };
-
 async function fetchOk(url, opts) {
   // CDN がたまに落とすのでリトライ1回
   for (let i = 0; ; i++) {
@@ -179,16 +175,15 @@ async function fetchOk(url, opts) {
 // 取得済み字幕セグメントを永続キャッシュ(Cache Storage)。HLSセグメントはURL不変・内容不変なので
 // 再オープン時はネットワーク無しで返せる(VODは全ヒット、ライブは新規分のみ取得)。
 const SEG_CACHE = "shusantv-vtt-v1";
-async function fetchSegmentText(url, stats, signal) {
+async function fetchSegmentText(url, signal) {
   let cache;
   if (typeof caches !== "undefined") {
     try {
       cache = await caches.open(SEG_CACHE);
       const hit = await cache.match(url);
-      if (hit) { if (stats) stats.hit++; return hit.text(); }
+      if (hit) return hit.text();
     } catch { /* キャッシュ不可ならネットワークにフォールバック */ }
   }
-  if (stats) stats.miss++;
   // セグメントの再試行は loader に一本化（最大3回）。
   const response = await fetch(url, { signal });
   if (!response.ok) throw new Error(`${response.status} ${url}`);
@@ -237,8 +232,6 @@ class TranscriptSession {
     this.alive = true;
     this.cues = [];           // 時刻順
     this.keys = new Set();    // 重複排除: "start|text"
-    this.lastEnd = null;      // 描画済み最終 cue の終了秒(休憩区切り用)
-    this.fetchedUrls = new Set(); // 取得成功したセグメントURL。失敗分は次回ポーリングで再試行される
     this.subsUrl = null;
     this.startEpoch = entry.programStart ? Date.parse(entry.programStart) : null; // 検知した番組固有の開始時刻
     this.pollTimer = null;
@@ -274,22 +267,21 @@ class TranscriptSession {
     return this.startEpoch ? fmtJst.format(new Date(this.startEpoch + t * 1000)) : fmtRel(t);
   }
 
-  // プレイリストを読み、未取得セグメントの字幕を取り込む。戻り値: 配信終了済みか
+  // プレイリストを読み、未取得セグメントの字幕を取り込む。
   async pull() {
     const playlist = await (await fetchOk(this.subsUrl, { cache: "no-store" })).text();
-    if (!this.alive) return true;
+    if (!this.alive) return;
     if (!this.loader) this.loader = shusantvTranscript.createLoader({
       concurrency: SEG_CONCURRENCY,
       fetchText: async url => {
         const controller = new AbortController();
         this.segmentRequests ??= new Set(); this.segmentRequests.add(controller);
         const timer = setTimeout(() => controller.abort(), 12000);
-        try { return await fetchSegmentText(url, null, controller.signal); }
+        try { return await fetchSegmentText(url, controller.signal); }
         finally { clearTimeout(timer); this.segmentRequests.delete(controller); }
       },
-      onText: (text, url) => {
+      onText: text => {
         if (!this.alive) return;
-        this.fetchedUrls.add(url);
         const fresh = parseVtt(text).filter(cue => {
           const key = `${cue.t.toFixed(3)}|${cue.text}`;
           if (this.keys.has(key)) return false;
@@ -301,18 +293,15 @@ class TranscriptSession {
           this.renderTimer = null;
           if (!this.alive) return;
           reconcileCues(this);
-          $("dlTxt").disabled = $("dlVtt").disabled = !this.cues.length;
-          refreshAiBtn();
+          refreshActions();
         }, 50);
       },
       onProgress: () => this.updateStatus()
-
     });
     await this.loader.enqueue(segmentUrls(playlist, this.subsUrl));
     if (this.alive) reconcileCues(this);
     this.ended = playlist.includes("#EXT-X-ENDLIST");
     this.updateStatus();
-    return this.ended;
   }
 
   isPartial() {
@@ -321,6 +310,7 @@ class TranscriptSession {
   }
   updateStatus() {
     if (!this.alive || this.summarizing) return;
+    refreshActions();
     const state = this.loader?.stats();
     if (!state) return;
     statusEl.textContent = state.pending
@@ -419,17 +409,15 @@ function download(name, mime, body) {
   setTimeout(() => URL.revokeObjectURL(url), 1000); // 即時解放するとダウンロード開始前にURLが無効になるブラウザがある
 }
 const today = () => new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
-// 取得失敗→再試行で cue が後追い追加されることがあるため、書き出し時は時刻順に揃える
-const sortedCues = () => [...session.cues].sort((a, b) => a.t - b.t);
 $("dlTxt").onclick = () => {
   if (!session) return;
-  const body = sortedCues().map((c) => `${session.fmtTime(c.t)}\t${c.text.replace(/\n/g, " ")}`).join("\n");
+  const body = session.cues.map((c) => `${session.fmtTime(c.t)}\t${c.text.replace(/\n/g, " ")}`).join("\n");
   download(`${today()}_${session.entry.name}${session.isPartial() ? "_取得済み部分" : ""}.txt`, "text/plain;charset=utf-8", body);
 };
 $("dlVtt").onclick = () => {
   if (!session) return;
   const ts = (t) => `${String(Math.floor(t / 3600)).padStart(2, "0")}:${String(Math.floor(t / 60) % 60).padStart(2, "0")}:${(t % 60).toFixed(3).padStart(6, "0")}`;
-  const body = "WEBVTT\n\n" + sortedCues().map((c) => `${ts(c.t)} --> ${ts(c.end)}\n${c.text}`).join("\n\n") + "\n";
+  const body = "WEBVTT\n\n" + session.cues.map((c) => `${ts(c.t)} --> ${ts(c.end)}\n${c.text}`).join("\n\n") + "\n";
   download(`${today()}_${session.entry.name}${session.isPartial() ? "_取得済み部分" : ""}.vtt`, "text/vtt;charset=utf-8", body);
 };
 
@@ -456,7 +444,8 @@ function cfg() {
   try { c = JSON.parse(localStorage.getItem(CFG_KEY) || "{}"); } catch { /* 破損は無視 */ }
   return { key: c.key || "", model: c.model || "openai/gpt-oss-120b", provider: c.provider || "cerebras" };
 }
-function refreshAiBtn() {
+function refreshActions() {
+  $("dlTxt").disabled = $("dlVtt").disabled = !session?.cues.length;
   const partial = !!session?.cues.length && session.isPartial();
   $("aiBtn").disabled = !!session?.summarizing || !(cfg().key && session && session.cues.length);
   $("aiBtn").textContent = partial ? "取得済み分を要約" : "AI要約";
@@ -473,11 +462,11 @@ $("setSave").onclick = () => {
     key: $("setKey").value.trim(), model: $("setModel").value, provider: $("setProvider").value.trim(),
   }));
   $("settings").classList.remove("open");
-  refreshAiBtn();
+  refreshActions();
 };
 $("setClear").onclick = () => {
   const c = cfg(); localStorage.setItem(CFG_KEY, JSON.stringify({ ...c, key: "" }));
-  $("setKey").value = ""; refreshAiBtn();
+  $("setKey").value = ""; refreshActions();
 };
 
 async function callChunk(cues, start, end, c) {
@@ -533,10 +522,10 @@ async function summarize() {
   const c = cfg();
   if (!c.key) { $("settings").classList.add("open"); return; }
   if (!sess || !sess.cues.length || sess.summarizing) return;
-  sess.summarizing = true; refreshAiBtn();
+  sess.summarizing = true; refreshActions();
   try {
     const partial = sess.isPartial();
-    const cues = sess.cues.map(({t,end,text}) => ({t,end,text})).sort((a, b) => a.t - b.t);
+    const cues = sess.cues.map(({t,end,text}) => ({t,end,text}));
     const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(cues)));
     const fingerprint = [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2,"0")).join("");
     if (sess !== session) return;
@@ -544,8 +533,6 @@ async function summarize() {
     let data = null;
     try { const hit = localStorage.getItem(cacheKey); if (hit) { data = JSON.parse(hit); data.fromCache = true; } } catch { /* 無視 */ }
     if (!data) {
-      sess.summarizing = true;
-      $("aiBtn").disabled = true;
       const ranges = [];
       for (let i = 0; i < cues.length; i += SUMMARY_CHUNK) ranges.push([i, Math.min(i + SUMMARY_CHUNK, cues.length)]);
       const parts = new Array(ranges.length);
@@ -573,7 +560,7 @@ async function summarize() {
     renderSummary(sess, cues, data);
   } finally {
     sess.summarizing = false;
-    if (sess === session) refreshAiBtn();
+    if (sess === session) refreshActions();
   }
 }
 
@@ -684,40 +671,28 @@ $("aiBtn").onclick = summarize;
 // ---- 会議の選択と読み込み ----
 async function openMeeting(entry) {
   session?.stop();
-  const sess = (session = new TranscriptSession(entry));
-  showMessage("字幕トラックを解決中…");
-  // ビューを原文に戻し、前会議の要約をクリア
-  $("summary").innerHTML = ""; $("summary").hidden = true; $("transcript").hidden = false; $("viewToggle").hidden = true;
-  $("dlTxt").disabled = $("dlVtt").disabled = true;
-  $("aiBtn").disabled = true;
+  const sess = (session = entry ? new TranscriptSession(entry) : null);
+  // 選択解除も同じ経路でビュー・操作ボタン・前会議の要約をリセットする。
+  $("summary").innerHTML = ""; $("summary").hidden = true;
+  $("transcript").hidden = false; $("viewToggle").hidden = true;
+  statusEl.textContent = "";
+  refreshActions();
+  showMessage(entry ? "字幕トラックを解決中…" : "会議を選択してください");
+  if (!sess) return;
   try {
-    const tOpen = performance.now();
     await Promise.all([sess.resolveSubsUrl(), sess.loadChannelInfo()]);
     if (!sess.alive) return;
-    dlog(`open「${entry.name}」: 字幕トラック解決 ${Math.round(performance.now() - tOpen)}ms`);
-    let ended = await sess.pull();
-    if (!sess.alive) return;
-    dlog(`open「${entry.name}」: 初回ロード完了 計${Math.round(performance.now() - tOpen)}ms (${sess.cues.length}発言)`);
-    $("dlTxt").disabled = $("dlVtt").disabled = !sess.cues.length;
-    refreshAiBtn();
-    sess.updateStatus();
-    if (entry.live && !ended) {
-      sess.updateStatus();
-      // pull が15秒を超えても多重実行されないよう、完了してから次回を予約する
-      const poll = async () => {
-        if (!sess.alive) return;
-        try {
-          ended = await sess.pull();
-          if (!sess.alive) return;
-          sess.updateStatus();
-          if (ended) return;
-        } catch { /* 一時的な失敗は次回ポーリングに任せる */ }
-        sess.pollTimer = setTimeout(poll, LIVE_POLL_MS);
-      };
-      sess.pollTimer = setTimeout(poll, LIVE_POLL_MS);
-    } else {
-      sess.updateStatus();
-    }
+    await sess.pull();
+    // 完了後に次回を予約するので、遅い pull が重複しない。
+    const schedulePoll = () => {
+      if (!sess.alive || !entry.live || sess.ended) return;
+      sess.pollTimer = setTimeout(async () => {
+        try { await sess.pull(); }
+        catch { /* 一時的な失敗は次回ポーリングに任せる */ }
+        schedulePoll();
+      }, LIVE_POLL_MS);
+    };
+    schedulePoll();
   } catch (e) {
     if (sess.alive) { showMessage(String(e.message || e), true); statusEl.textContent = ""; }
   }
@@ -776,15 +751,7 @@ select.onchange = () => {
   if (select.value) url.searchParams.set("id", select.value);
   else url.searchParams.delete("id");
   history.replaceState(null, "", url);
-  const entry = entries.get(select.value);
-  if (entry) openMeeting(entry);
-  else {
-    session?.stop(); session = null;
-    $("dlTxt").disabled = $("dlVtt").disabled = $("aiBtn").disabled = true;
-    $("summary").hidden = true; $("transcript").hidden = false; $("viewToggle").hidden = true;
-    statusEl.textContent = "";
-    showMessage("会議を選択してください");
-  }
+  openMeeting(entries.get(select.value));
 };
 
 async function refreshMeetings() {

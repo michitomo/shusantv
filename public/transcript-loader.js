@@ -33,7 +33,7 @@
           active[lane]--;
           job.resolve(); // First attempt releases initial loading; retries continue independently.
           if (stopped) return;
-          onProgress([...jobs.values()].filter(j => j.state === 'done').length, jobs.size);
+          onProgress();
           pump(lane);
         });
       }

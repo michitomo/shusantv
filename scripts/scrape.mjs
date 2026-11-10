@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getStreams } from "../lib/scrape.mjs";
 import { createRequire } from "node:module";
-const { SEED_CHANNELS, channelHash } = createRequire(import.meta.url)("../public/sangiin-discovery.js");
+const { SEED_CHANNELS, knownChannels } = createRequire(import.meta.url)("../public/sangiin-discovery.js");
 
 const out = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "public", "streams.json");
 const data = await getStreams();
@@ -14,15 +14,10 @@ let previous = [];
 if (process.env.PREVIOUS_STREAMS_URL) {
   try {
     const res = await fetch(process.env.PREVIOUS_STREAMS_URL, { signal: AbortSignal.timeout(5000), cache: "no-store" });
-    if (res.ok) {
-      const old = await res.json();
-      previous = [...(Array.isArray(old.sangiinChannels) ? old.sangiinChannels : []),
-        ...(Array.isArray(old.streams) ? old.streams.map(channelHash) : [])];
-    }
+    if (res.ok) previous = knownChannels(await res.json());
   } catch (e) { console.warn(`Previous channel list unavailable: ${e.message}`); }
 }
-data.sangiinChannels = [...new Set([...(data.sangiinChannels || []), ...previous, ...SEED_CHANNELS]
-  .filter((h) => typeof h === "string" && /^[a-z0-9]{12,64}$/.test(h)))].slice(0, 32);
+data.sangiinChannels = knownChannels(data, previous, SEED_CHANNELS);
 await writeFile(out, JSON.stringify(data, null, 1));
 console.log(`${data.streams.length} streams, ${data.vod.length} vod -> ${out}`);
 if (data.errors.length) console.error("errors:", data.errors);

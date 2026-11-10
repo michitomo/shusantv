@@ -34,6 +34,14 @@
     }
     return null;
   }
+  // 新しい公式一覧を優先し、保存先によらず同じ検証・上限を使う。
+  function knownChannels(...sources) {
+    const hashes = sources.flatMap((source) => Array.isArray(source) ? source : [
+      ...(Array.isArray(source?.streams) ? source.streams.filter((s) => s.house === "sangiin").map(channelHash) : []),
+      ...(Array.isArray(source?.sangiinChannels) ? source.sangiinChannels : []),
+    ]);
+    return [...new Set(hashes.filter(validHash))].slice(0, 32);
+  }
   function recent(value, now) {
     const t = Date.parse(value);
     return Number.isFinite(t) && +now - t >= -30_000 && +now - t <= FRESH_MS;
@@ -44,7 +52,7 @@
     return ["public", "private"].includes(info?.config?.published)
       && ["active", "inactive"].includes(s?.output)
       && ["number", "string"].includes(typeof s?.program_id)
-      && Number.isSafeInteger(Number(s.program_id)) && Number(s.program_id) >= 0
+      && Number.isSafeInteger(id) && id >= 0
       && (id === 0 || id === 65535
         ? typeof s.program_uid === "string" && /^[a-z0-9._-]{1,100}$/.test(s.program_uid)
         : validHash(s.program_uid))
@@ -55,10 +63,9 @@
     const s = info?.status;
     const id = Number(s?.program_id);
     if (!validMetadata(info, now) || !validHash(hash) || info?.config?.published !== "public" || s?.output !== "active"
-      || !Number.isSafeInteger(id) || id <= 0 || id === 65535 || !validHash(s?.program_uid)
-      || !recent(s?.date, now) || !recent(s?.latest_pts, now)) return null;
+      || id === 0 || id === 65535 || !recent(s.latest_pts, now)) return null;
     const start = Date.parse(s.program_start);
-    if (!Number.isFinite(start) || start > +now + 30_000 || day(start) !== day(now)) return null;
+    if (start > +now + 30_000 || day(start) !== day(now)) return null;
     const schedule = (Array.isArray(info.schedules) ? info.schedules : [])
       .find((x) => x.status?.program_uid === s.program_uid);
     if (schedule?.status?.program_end || (schedule?.config?.published && schedule.config.published !== "public")) return null;
@@ -114,8 +121,7 @@
       let saved = [];
       try { const value = JSON.parse(storage?.getItem(STORAGE_KEY) || "[]"); if (Array.isArray(value)) saved = value; } catch {}
       // 最新一覧を優先。上限を超える場合は古い学習分を捨て、新チャンネルを飢餓状態にしない。
-      const latest = (data?.streams || []).filter((s) => s.house === "sangiin").map(channelHash);
-      const hashes = [...new Set([...latest, ...(data?.sangiinChannels || []), ...saved, ...states.keys(), ...SEED_CHANNELS].filter(validHash))].slice(0, 32);
+      const hashes = knownChannels(data, saved, [...states.keys()], SEED_CHANNELS);
       for (const hash of hashes) if (!states.has(hash)) states.set(hash, { next: 0, failures: 0, info: null });
       for (const hash of states.keys()) if (!hashes.includes(hash)) states.delete(hash);
       try { storage?.setItem(STORAGE_KEY, JSON.stringify(hashes)); } catch {}
@@ -181,6 +187,6 @@
     run();
     return () => { stopped = true; clearTimeout(timer); doc.removeEventListener("visibilitychange", visible); };
   }
-  return { SEED_CHANNELS, POLL_MS, FRESH_MS, day, sameDayListing, channelHash, candidateFromInfo,
+  return { SEED_CHANNELS, POLL_MS, FRESH_MS, day, sameDayListing, channelHash, knownChannels, candidateFromInfo,
     mergeStreams, transcriptEntries, createDiscovery, startPolling };
 });
