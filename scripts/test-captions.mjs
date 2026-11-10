@@ -25,7 +25,7 @@ export async function runCaptionTests() {
       if (asr) await check('!!t.rec', false);
       await page.eval('t.video.play()');
       await until(asr ? '!!t.rec' : '!!t.vtt');
-      await page.eval(`window.bubble = t.el.querySelector('.bubble'); window.back = t.el.querySelector('.caption-return');
+      await page.eval(`window.rawCaption = root => [...root.querySelectorAll('.caption-original')].map(node => node.textContent).join(''); window.bubble = t.el.querySelector('.bubble'); window.back = t.el.querySelector('.caption-return');
         Object.defineProperties(bubble, {scrollHeight:{value:1000,configurable:true}, clientHeight:{value:100,configurable:true}});
         clickTile('sid9456');`);
       await check('bubble.getAttribute("tabindex")', '0');
@@ -50,7 +50,7 @@ export async function runCaptionTests() {
           t.rec.emit([['初めの発言',true],['記事追加',true]]);`);
         await check('back.textContent.includes("新着 1 段落")');
         await check('bubble.firstChild === window.firstRow');
-        await check('bubble.textContent', '初めの発言、記事追加、');
+        await check('rawCaption(bubble)', '初めの発言、記事追加、');
         harness.state.now += 3001;
         await page.eval(`t.rec.emit([['初めの発言',true],['記事追加',true],['次の段落',false]]);`);
         await check('bubble.children.length', 2);
@@ -60,8 +60,8 @@ export async function runCaptionTests() {
         await check('back.hidden');
         await check('bubble.scrollTop', 1000);
         await page.eval(`t.rec.emit([['初めの発言',true],['記事追加',true],['次の段落'+'長'.repeat(200),true]]);`);
-        await check('bubble.textContent.startsWith("初めの発言")');
-        await check('bubble.textContent.length > 200');
+        await check('rawCaption(bubble).startsWith("初めの発言")');
+        await check('rawCaption(bubble).length > 200');
 
         // Pause, buffering, and seeking invalidate old callbacks without fake gaps.
         for (const event of ['pause', 'waiting', 'seeking']) {
@@ -71,14 +71,14 @@ export async function runCaptionTests() {
           await check('t.rec !== window.oldRec');
           await check('window.oldRec.aborted');
           await check('bubble.children.length', 2);
-          await check('bubble.textContent.includes("遅延結果")', false);
+          await check('rawCaption(bubble).includes("遅延結果")', false);
         }
         await page.eval(`t.rec.emit([['再開',true],['未確定',false]]); window.oldRec=t.rec; t.rec.onend();`);
-        await check('bubble.textContent.includes("未確定")', false);
+        await check('rawCaption(bubble).includes("未確定")', false);
         harness.state.now += 60000;
         await until('!!t.rec && t.rec !== window.oldRec');
         await page.eval(`window.oldRec.emit([['旧セッション',true]]); t.rec.emit([['再起動後',true]]);`);
-        await check('bubble.textContent.includes("旧セッション")', false);
+        await check('rawCaption(bubble).includes("旧セッション")', false);
         await check('bubble.children.length', 2);
         await page.eval(`bubble.scrollTop=50; bubble.dispatchEvent(new Event('scroll')); t.cap.focus(false);`);
         await check('back.hidden');
@@ -89,13 +89,13 @@ export async function runCaptionTests() {
           window.cue=(text,startTime,endTime)=>({text,startTime,endTime});
           window.firstCue=cue('公式一',1,2); track.emit([firstCue]);
           track.emit([firstCue]); track.emit([cue('公式一',1.5,2.5)]);`);
-        await check('bubble.textContent', '公式一、');
+        await check('rawCaption(bubble)', '公式一、');
         harness.state.now += 60000;
         await page.eval(`track.emit([cue('公式二',2.5,3)]); track.emit([cue('公式三',6,7)]);`);
         await check('bubble.children.length', 2);
         for (const event of ['pause', 'waiting', 'seeking']) {
           await page.eval(`t.video.dispatchEvent(new Event('${event}')); track.emit([cue('停止中',30,31)]);`);
-          await check('bubble.textContent.includes("停止中")', false);
+          await check('rawCaption(bubble).includes("停止中")', false);
           await page.eval(`track.activeCues=[cue('再開${event}',40,41)]; t.video.dispatchEvent(new Event('playing'));`);
           await check('bubble.children.length', 2);
         }
@@ -108,14 +108,14 @@ export async function runCaptionTests() {
       harness.state.now += 61000;
       await page.eval('refresh()');
       await check('t.cap !== window.oldCap');
-      await check('t.el.querySelector(".bubble").textContent', '');
+      await check('rawCaption(t.el.querySelector(".bubble"))', '');
       if (asr) await page.eval(`window.oldRec.emit([['古いソース',true]]);`);
       else await page.eval(`window.oldTrack.emit([cue('古いソース',50,51)]);`);
-      await check('t.el.querySelector(".bubble").textContent', '');
+      await check('rawCaption(t.el.querySelector(".bubble"))', '');
       await page.eval(`t.hls.events[Hls.Events.MANIFEST_PARSED]();`);
       if (asr) {
         await page.eval(`t.rec.emit([['新しいソース',true]]); window.lastRec=t.rec;`);
-        await check('t.el.querySelector(".bubble").textContent', '新しいソース、');
+        await check('rawCaption(t.el.querySelector(".bubble"))', '新しいソース、');
       }
       await page.eval(`window.lastCap=t.cap; removeTile('sid9456');`);
       await check('t.hls.destroyed');
@@ -132,10 +132,10 @@ export async function runCaptionTests() {
           Object.defineProperties(ab,{scrollHeight:{value:40000},clientHeight:{value:100}});
           ab.getBoundingClientRect=()=>({top:0,bottom:100});
           window.many=Array.from({length:2000},(_,i)=>({text:'字幕'+i,final:true})); anchorCap.updateAsr(many,0);
-          for(const node of ab.querySelectorAll('span')) node.getBoundingClientRect=()=>{const i=[...node.parentNode.children].indexOf(node);return {top:i*20-ab.scrollTop,bottom:(i+1)*20-ab.scrollTop};};
-          ab.scrollTop=400; ab.dispatchEvent(new Event('scroll')); window.keptSpan=ab.querySelectorAll('span')[20];
+          for(const node of ab.querySelectorAll('.caption-original > span')) node.getBoundingClientRect=()=>{const i=[...node.parentNode.children].indexOf(node);return {top:i*20-ab.scrollTop,bottom:(i+1)*20-ab.scrollTop};};
+          ab.scrollTop=400; ab.dispatchEvent(new Event('scroll')); window.keptSpan=ab.querySelectorAll('.caption-original > span')[20];
           many.push({text:'字幕2000',final:true}); anchorCap.updateAsr(many,1);`);
-        await check('ab.querySelectorAll("span").length', 2000);
+        await check('ab.querySelectorAll(".caption-original > span").length', 2000);
         await check('ab.scrollTop', 380);
         await check('window.keptSpan.getBoundingClientRect().top', 0);
         await page.eval('anchorCap.stop(); anchorTile.el.remove();');

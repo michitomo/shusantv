@@ -121,7 +121,7 @@
   <span class="status" id="listStatus" aria-live="polite"></span>
 </header>
 <div id="settings">
-  <h3>AI要約の設定 (BYOK)</h3>
+  <h3>OpenRouter設定（要約・ASR校正で共用）</h3>
   <label for="setKey">OpenRouter APIキー</label>
   <input id="setKey" type="password" placeholder="sk-or-...">
   <label for="setModel">モデル</label>
@@ -138,7 +138,7 @@
     <button id="setSave">保存</button>
     <button id="setClear">キーを削除</button>
   </div>
-  <div class="hint">キーは<b>この端末のブラウザ内(localStorage)のみ</b>に保存され、要約はあなたのブラウザから直接OpenRouterへ送られます。本文は書き換えません。<br><b>無料モデルでもAPIキーは必要</b>です(レート制限あり。長い会議だと一部失敗することがあります)。<a href="https://openrouter.ai/keys" target="_blank" rel="noopener">キーの取得</a></div>
+  <div class="hint">キーは<b>この端末のブラウザ内(localStorage)のみ</b>に保存され、本文はあなたのブラウザからOpenRouter・モデル提供元へ送られます。要約では原文を書き換えません。動画の自動校正は別途ONが必要です。<br><b>無料モデルでもAPIキーは必要</b>です(レート制限あり。長い会議だと一部失敗することがあります)。<a href="https://openrouter.ai/keys" target="_blank" rel="noopener">キーの取得</a></div>
 </div>
 <div id="transcript"><div id="message">会議を選択してください</div></div>
 <div id="summary" hidden></div>
@@ -148,6 +148,7 @@
 <script src="listing.js"></script>
 <script src="sangiin-discovery.js"></script>
 <script src="transcript-loader.js"></script>
+<script src="openrouter.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
 const statusEl = $("status");
@@ -439,11 +440,7 @@ const SUM_SYSTEM = `あなたは国会審議の自動字幕(誤変換あり)を�
 
 const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 
-function cfg() {
-  let c = {};
-  try { c = JSON.parse(localStorage.getItem(CFG_KEY) || "{}"); } catch { /* 破損は無視 */ }
-  return { key: c.key || "", model: c.model || "openai/gpt-oss-120b", provider: c.provider || "cerebras" };
-}
+const cfg = () => OpenRouterProofreader.readConfig(localStorage);
 function refreshActions() {
   $("dlTxt").disabled = $("dlVtt").disabled = !session?.cues.length;
   const partial = !!session?.cues.length && session.isPartial();
@@ -779,6 +776,7 @@ async function refreshMeetings() {
     : "本日の参議院の中継・録画はありません(会議一覧は自動更新されます)");
 }
 shusantvSangiin.startPolling(refreshMeetings);
+if (location.hash === "#settings") $("gear").onclick();
 
 </script>
 </body>

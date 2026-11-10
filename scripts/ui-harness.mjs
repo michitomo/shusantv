@@ -4,7 +4,7 @@ import { webcrypto } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { createFixture, HlsMock, publicFile } from './ui-fixture.mjs';
 const require = createRequire(import.meta.url);
-export async function createHarness(browserMode = false, { captionMedia = true, asr = false } = {}) {
+export async function createHarness(browserMode = false, { captionMedia = true, asr = false, storage = {}, fetch: request } = {}) {
   const fixture = createFixture(), { state } = fixture, errors = [];
   const browser = browserMode ? await require('playwright').chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_PATH, args: ['--no-sandbox'] }) : null;
   async function open(file, search = '') {
@@ -27,18 +27,19 @@ export async function createHarness(browserMode = false, { captionMedia = true, 
       set(value) { for (const option of this.querySelectorAll('option')) option.toggleAttribute('selected', option.getAttribute('value') === value); },
     });
     Object.defineProperty(document, 'hidden', { value: false, writable: true });
-    const timers = new Set(), store = new Map();
+    const timers = new Set(), store = new Map(Object.entries(storage));
+    const events = document.createElement("span");
     const timeout = (fn, ms) => { const id = setTimeout(() => { timers.delete(id); fn(); }, ms); timers.add(id); return id; };
     class ClockDate extends Date { constructor(...args) { super(...(args.length ? args : [state.now])); } static now() { return state.now; } }
-    const location = { href: `https://test.local/${file}${search}`, pathname: `/${file}`, search };
+    const location = new URL(`https://test.local/${file}${search}`);
     const sandbox = {
       document, console, Date: ClockDate, Intl, URL, URLSearchParams, AbortController, AbortSignal, Response, Blob,
       TextEncoder, TextDecoder, performance, Map, Set, Promise, Uint8Array, crypto: webcrypto, Hls: HlsMock, Event: dom.Event,
-      fetch: fixture.fetch, location, history: { replaceState(_, __, url) { location.href = String(url); } }, navigator: {},
+      fetch: (url, options) => request ? request(url, options, fixture.fetch) : fixture.fetch(url, options), location, history: { replaceState(_, __, url) { location.href = String(url); } }, navigator: {},
       localStorage: { getItem: key => store.get(key) || null, setItem: (key, value) => store.set(key, value), removeItem: key => store.delete(key) },
       innerHeight: 768, innerWidth: 1024, scrollY: 0, scrollX: 0,
       scrollTo(x, y) { sandbox.scrollY = typeof x === 'object' ? x.top : y; }, scrollBy(x, y) { sandbox.scrollY += y; },
-      addEventListener() {}, removeEventListener() {}, setTimeout: timeout, clearTimeout,
+      addEventListener: events.addEventListener.bind(events), removeEventListener: events.removeEventListener.bind(events), dispatchEvent: events.dispatchEvent.bind(events), setTimeout: timeout, clearTimeout,
       setInterval: (fn, ms) => { const id = setInterval(fn, ms); timers.add(id); return id; }, clearInterval,
       requestAnimationFrame: fn => timeout(() => fn(performance.now()), 0), cancelAnimationFrame: clearTimeout,
     };

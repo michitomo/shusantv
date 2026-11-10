@@ -9,16 +9,32 @@
     let entries = [], nextId = 1, paragraph = 1;
     let slots = new Map(), finalizedThrough = -1, run = 0, active = true;
     let lastChange = null, lastCue = null, cueEnd = null;
+    const closed = new Set(), asrParagraphs = new Set();
     const clean = text => String(text || '').trim();
     const snapshot = () => entries.map(entry => ({ ...entry }));
-    const result = (added = 0, changed = false, newTextParagraphs = []) => ({
-      entries: snapshot(), added, changed, newTextParagraphs: [...new Set(newTextParagraphs)]
+    const result = (added = 0, changed = false, newTextParagraphs = [], closedParagraphs = []) => ({
+      entries: snapshot(), added, changed, newTextParagraphs: [...new Set(newTextParagraphs)],
+      closedParagraphs
     });
     function trim() {
-      if (entries.length <= limit) return;
-      entries.splice(0, entries.length - limit);
+      if (entries.length > limit) entries.splice(0, entries.length - limit);
       const kept = new Set(entries);
       for (const [index, entry] of slots) if (!kept.has(entry)) slots.delete(index);
+      const paragraphs = new Set(entries.map(entry => entry.paragraph));
+      for (const id of closed) if (!paragraphs.has(id)) closed.delete(id);
+      for (const id of asrParagraphs) if (!paragraphs.has(id)) asrParagraphs.delete(id);
+    }
+    function closeParagraph(id) {
+      if (closed.has(id) || !asrParagraphs.has(id)) return false;
+      const items = entries.filter(entry => entry.paragraph === id);
+      if (!items.length || items.some(entry => entry.interim)) return false;
+      closed.add(id);
+      return true;
+    }
+    // A timer may settle final text, but lifecycle interruptions never do.
+    function settle(now = Date.now(), token = run) {
+      if (!active || token !== run || lastChange === null || now - lastChange < gapMs) return result();
+      return result(0, false, [], closeParagraph(paragraph) ? [paragraph] : []);
     }
     function add(text, interim, split) {
       if (split && entries.length) paragraph++;
@@ -38,7 +54,8 @@
         let entry = slots.get(index);
         if (text) {
           if (!entry) {
-            entry = add(text, !final, lastChange !== null && now - lastChange >= gapMs);
+            entry = add(text, !final, closed.has(paragraph) || (lastChange !== null && now - lastChange >= gapMs));
+            asrParagraphs.add(entry.paragraph);
             slots.set(index, entry);
             added++;
             newTextParagraphs.push(entry.paragraph);
@@ -74,7 +91,11 @@
         }
       }
       trim();
-      return result(added, changed, newTextParagraphs);
+      const closedParagraphs = [];
+      for (const id of asrParagraphs) {
+        if (id !== paragraph && closeParagraph(id)) closedParagraphs.push(id);
+      }
+      return result(added, changed, newTextParagraphs, closedParagraphs);
     }
     // Cue times are seconds on the media timeline, not HTTP arrival times.
     // The caller supplies newly viewed cues in media order, not a backlog fetch.
@@ -106,6 +127,7 @@
       finalizedThrough = -1;
       lastChange = null;
       cueEnd = null;
+      trim();
       return result(0, entries.length !== before);
     }
     function resetRecognition() {
@@ -113,7 +135,7 @@
       active = true;
       return run;
     }
-    return { updateAsr, appendCue, interrupt, resetRecognition, snapshot };
+    return { updateAsr, appendCue, settle, interrupt, resetRecognition, snapshot };
   }
   return { createHistory };
 });

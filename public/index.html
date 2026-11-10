@@ -108,6 +108,15 @@
   .caption-controls { height: 44px; display: flex; align-items: center; justify-content: center; width: 88%; }
   .caption-note, .caption-return { background: rgba(5,5,7,.85); color: #eee; font-size: 11px; }
   .caption-note { padding: 2px 6px; border-radius: 4px; }
+  .caption-proof { display: block; font-size: 11px; color: #aaa; }
+  .caption-proof[hidden], .tile:not(.unmuted) .caption-proof { display: none; }
+  .caption-proof button { font: inherit; color: var(--accent); background: transparent; border: 0; min-height: 44px; padding: 8px; cursor: pointer; }
+  #proofreadSettings { font-size: 12px; }
+  #proofreadSettings summary { cursor: pointer; }
+  .proofread-panel { position: absolute; z-index: 5; right: 12px; width: min(320px, calc(100vw - 48px)); padding: 12px;
+    background: #14141a; border: 1px solid var(--glass-border); border-radius: 8px; font-size: 12px; line-height: 1.5; }
+  .proofread-panel a { display: block; color: var(--accent); }
+  .proofread-panel p { margin: 8px 0; color: #aaa; }
   .caption-return { border: 1px solid var(--accent); border-radius: 6px; min-height: 44px; padding: 6px 12px; cursor: pointer; }
   .bubble:empty, .caption-note:empty, .tile:not(.unmuted) .caption-controls { display: none; }
   /* プレビューの字幕は広いタイルでだけ5行に拡大し、極小タイルでは映像が食われるので出さない */
@@ -147,6 +156,16 @@
   <input id="watch" placeholder="ウォッチ: 議員名,会派をカンマ区切り">
   <label class="auto"><input type="checkbox" id="autoFocus" checked> ヒットで自動フォーカス</label>
   <span class="status"><a href="transcript.html" style="color:#7da7c7;text-decoration:none">📝 文字起こし(参)</a></span>
+  <details id="proofreadSettings">
+    <summary>ASR校正</summary>
+    <div class="proofread-panel">
+      <label><input id="proofread" type="checkbox" disabled> 自動校正（全タイル）</label>
+      <p>ON後に確定するASR段落をOpenRouterとモデル提供元へ送信します。段落ごとに料金が発生し、取消でも課金される場合があります。校正案は元字幕と見比べてください。</p>
+      <p>最大4,000字／段落・同時1件。エラーは自動再送しません。</p>
+      <span id="proofreadStatus" role="status"></span>
+      <a href="transcript.html#settings" target="_blank" rel="noopener">BYOK・モデル設定（要約と共用）</a>
+    </div>
+  </details>
   <span class="status credit">映像:
     <a href="https://www.shugiintv.go.jp/jp/" target="_blank" rel="noopener">衆議院インターネット審議中継</a> /
     <a href="https://www.webtv.sangiin.go.jp/webtv/" target="_blank" rel="noopener">参議院インターネット審議中継</a>
@@ -157,6 +176,8 @@
 <script src="listing.js"></script>
 <script src="sangiin-discovery.js"></script>
 <script src="caption-history.js"></script>
+<script src="caption-view.js"></script>
+<script src="openrouter.js"></script>
 <script>
 const grid = document.getElementById("grid");
 const statusEl = document.getElementById("status");
@@ -173,6 +194,43 @@ if (!asrMode) {
   document.body.classList.add("noasr");
   gate.textContent = "クリックで開始（音声の有効化）";
 }
+
+// BYOK設定は要約ページと共有。保存済みキーだけでは自動送信しない。
+const proofreadToggle = document.getElementById("proofread");
+const proofreadStatus = document.getElementById("proofreadStatus");
+const proofreadListeners = new Map(), proofreadRunning = new Set();
+let proofreadCost = 0, proofreadUnknownCost = 0;
+const proofreader = OpenRouterProofreader.createProofreader({
+  getConfig: () => OpenRouterProofreader.readConfig(localStorage),
+  onChange(event) {
+    if (event.status === "running") proofreadRunning.add(event.id);
+    if (["done", "error", "cancelled"].includes(event.status) && proofreadRunning.delete(event.id)) {
+      if (Number.isFinite(event.cost)) proofreadCost += event.cost;
+      else proofreadUnknownCost++;
+    }
+    proofreadListeners.get(event.id)?.(event);
+    updateProofreadSettings();
+  },
+});
+function updateProofreadSettings() {
+  const config = OpenRouterProofreader.readConfig(localStorage);
+  proofreadToggle.disabled = !asrMode || !config.key;
+  proofreadStatus.textContent = !asrMode ? "ブラウザASRのみ対応（公式字幕は送信しません）" : !config.key ? "BYOKキー未設定" :
+    `${config.model} · この表示中のAPI返却額 $${proofreadCost.toFixed(4)}${proofreadUnknownCost ? ` + 不明${proofreadUnknownCost}件` : ""}`;
+}
+function stopProofreading() {
+  proofreadToggle.checked = false;
+  for (const t of tiles.values()) t.cap?.cancelProofreading();
+  proofreader.clear();
+}
+proofreadToggle.addEventListener("change", () => {
+  updateProofreadSettings();
+  if (!proofreadToggle.checked || proofreadToggle.disabled) stopProofreading();
+});
+window.addEventListener("storage", event => {
+  if (event.key === "shusantv.aicfg" || event.key === null) { stopProofreading(); updateProofreadSettings(); }
+});
+updateProofreadSettings();
 
 // ---- 音声基盤 ----
 // Chromeでは muted な video の音声キャプチャが無音になる既知バグがあるため、
@@ -215,75 +273,23 @@ function initAudio(t) {
   startAsr(t); // 衆参とも同じASR字幕
 }
 
-// ---- 視聴中の字幕履歴 (メモリのみ、話者は推定しない) ----
-function createCaption(t) {
-  const el = t.el.querySelector(".asr");
-  el.innerHTML = '<div class="bubble" role="region" aria-label="視聴中の字幕。上へスクロールで追尾停止"></div><div class="caption-controls"><span class="caption-note"></span><button class="caption-return" type="button" hidden>ライブに戻る</button></div>';
-  const bubble = el.querySelector(".bubble"), note = el.querySelector(".caption-note"), back = el.querySelector("button");
-  const history = shusantvCaptionHistory.createHistory(), rows = new Map(), fragments = new Map(), unread = new Set();
-  let following = true, alive = true;
-  const hint = "字幕履歴: 上へスクロール（最大2000件・保存なし）";
-  function controls() {
-    back.hidden = following;
-    note.hidden = !following;
-    back.textContent = `${unread.size ? `新着 ${unread.size} 段落 · ` : ""}ライブに戻る`;
-  }
-  function follow() { following = true; unread.clear(); bubble.scrollTop = bubble.scrollHeight; controls(); }
-  bubble.addEventListener("scroll", () => {
-    following = bubble.scrollHeight - bubble.scrollTop - bubble.clientHeight < 8;
-    if (following) unread.clear();
-    controls();
-  });
-  el.addEventListener("click", e => e.stopPropagation());
-  back.addEventListener("click", follow);
-  function render(update) {
-    if (!alive || !update.changed) return;
-    const top = bubble.getBoundingClientRect().top;
-    const kept = new Set(update.entries.map(entry => entry.id));
-    const anchor = following ? null : [...fragments].find(([id, node]) => kept.has(id) && node.getBoundingClientRect().bottom > top)?.[1];
-    const anchorTop = anchor?.getBoundingClientRect().top;
-    const paragraphs = new Map();
-    for (const entry of update.entries) {
-      if (!paragraphs.has(entry.paragraph)) paragraphs.set(entry.paragraph, []);
-      paragraphs.get(entry.paragraph).push(entry);
-    }
-    for (const [id, entries] of paragraphs) {
-      let row = rows.get(id);
-      if (!row) { row = document.createElement("p"); rows.set(id, row); bubble.appendChild(row); }
-      for (const entry of entries) {
-        let fragment = fragments.get(entry.id);
-        if (!fragment) { fragment = document.createElement("span"); fragments.set(entry.id, fragment); row.appendChild(fragment); }
-        const text = entry.interim ? entry.text : punct(entry.text);
-        if (fragment.textContent !== text) fragment.textContent = text;
-        fragment.classList.toggle("interim", entry.interim);
-      }
-    }
-    for (const [id, node] of fragments) if (!kept.has(id)) { node.remove(); fragments.delete(id); }
-    for (const [id, row] of rows) if (!paragraphs.has(id)) { row.remove(); rows.delete(id); }
-    if (update.newTextParagraphs.length) note.textContent = hint;
-    if (following) follow();
-    else {
-      for (const id of update.newTextParagraphs) unread.add(id);
-      if (anchor?.isConnected) bubble.scrollTop += anchor.getBoundingClientRect().top - anchorTop;
-      controls();
-    }
-  }
-  return {
-    updateAsr: (results, now, token) => render(history.updateAsr(results, now, token)),
-    append(text, start, end) { const update = history.appendCue(text, start, end); render(update); return update.changed; },
-    interrupt: () => render(history.interrupt()),
-    resetRecognition: () => { render(history.interrupt()); return history.resetRecognition(); },
-    tail: n => history.snapshot().map(e => e.text).join("").slice(-n),
-    focus(on) { bubble.tabIndex = on ? 0 : -1; if (!on) { bubble.blur?.(); follow(); } else if (following) bubble.scrollTop = bubble.scrollHeight; },
-    message(text) { if (alive) note.textContent = text; },
-    stop() { alive = false; history.interrupt(); el.replaceChildren(); },
-  };
+// ---- 視聴中の字幕履歴 ----
+function captionContext(stream) {
+  const house = { shugiin: "衆議院", sangiin: "参議院" }[stream.house];
+  const name = stream.nameConfirmed === false || /確認中|委員会室|本会議場/.test(stream.name || "") ? null : stream.name;
+  const day = stream.programStart ? shusantvSangiin.day(stream.programStart)
+    : stream.house === "sangiin" && shusantvSangiin.sameDayListing(lastListing) ? lastListing.sangiinSessionDate
+    : stream.house === "shugiin" && shusantvListing.listingCurrent(lastListing) ? lastListing.sessionDate : null;
+  return { house, name, date: /^\d{4}-\d{2}-\d{2}$/.test(day || "") ? day.replace(/^(\d+)-(\d+)-(\d+)$/, "$1年$2月$3日") : null };
 }
-// ポーズ(isFinal)や字幕cueの末尾に句読点を補う: 文末形なら「。」、続きそうなら「、」
-const punct = (s) =>
-  !s || /[。、．，！？!?]$/.test(s) ? s
-  : /(です|ます|でした|ました|ません|ございます|であります)(ね|よ)?$/.test(s) ? s + "。"
-  : s + "、";
+function createCaption(t) {
+  return shusantvCaptionView.create(t.el.querySelector(".asr"), {
+    getContext: () => captionContext(t.stream || {}),
+    isEnabled: () => asrMode && proofreadToggle.checked,
+    submit(job, receive) { proofreadListeners.set(job.id, receive); proofreader.submit(job); },
+    cancel(id) { proofreadListeners.delete(id); proofreader.cancel(id); },
+  });
+}
 
 // ---- 衆参共通: ブラウザ内蔵オンデバイス音声認識 (Chrome 139+) ----
 // 注意: SODA(SpeechRecognition.install)導入直後はChrome完全再起動が必要。
@@ -714,7 +720,7 @@ async function probeShugiin(known) {
         const res = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(6000) });
         if (res.ok && (await res.text()).includes("#EXTM3U"))
           found.push({
-            house: "shugiin", id: roomId, time: "", m3u8: url,
+            house: "shugiin", id: roomId, time: "", m3u8: url, nameConfirmed: false,
             name: shusantvListing.fallbackShugiinName(roomId),
           });
       } catch {}
