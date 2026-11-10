@@ -148,6 +148,7 @@ import { loadDefaultJapaneseParser } from "https://cdn.jsdelivr.net/npm/budoux@0
 window.budouxParser = loadDefaultJapaneseParser();
 </script>
 <script src="listing.js"></script>
+<script src="sangiin-discovery.js"></script>
 <script>
 const grid = document.getElementById("grid");
 const statusEl = document.getElementById("status");
@@ -484,7 +485,7 @@ function makeTile(s) {
   hls.on(Hls.Events.ERROR, (_, data) => {
     if (!data.fatal) return;
     if (++fails > 3) { removeTile(s.id); return; } // 中継終了済みのタイルは畳む
-    setTimeout(() => hls.loadSource(s.m3u8), 5000);
+    setTimeout(() => { if (tiles.get(s.id) === t) hls.loadSource(t.stream.m3u8); }, 5000);
   });
   hls.loadSource(s.m3u8);
   hls.attachMedia(video);
@@ -665,7 +666,7 @@ async function probeShugiin(known) {
     SHU_ROOMS.filter((r) => !known.has(r)).map(async (roomId) => {
       try {
         const url = `https://hlslive.shugiintv.go.jp/${roomId}/amlst:${roomId}/playlist.m3u8`;
-        const res = await fetch(url, { cache: "no-store" });
+        const res = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(6000) });
         if (res.ok && (await res.text()).includes("#EXTM3U"))
           found.push({
             house: "shugiin", id: roomId, time: "", m3u8: url,
@@ -677,16 +678,25 @@ async function probeShugiin(known) {
   return found;
 }
 
+const sangiinDiscovery = shusantvSangiin.createDiscovery();
+let lastListing = { streams: [], vod: [], errors: [] };
 async function refresh() {
   try {
-    const data = await (await fetch("streams.json" + location.search, { cache: "no-store" })).json();
+    let listingError = "";
+    try {
+      const res = await fetch("streams.json" + location.search, { cache: "no-store", signal: AbortSignal.timeout(10_000) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      lastListing = await res.json();
+    } catch (e) { listingError = ` / 一覧更新待ち: ${e.message}`; }
+    const data = lastListing;
     const { updatedAt, errors = [] } = data;
     const demo = location.search.includes("demo");
     const namesCurrent = demo || shusantvListing.listingCurrent(data);
-    const streams = demo ? (data.streams ?? []) : shusantvListing.streamsForGrid(data);
+    let streams = demo ? (data.streams ?? []) : shusantvListing.streamsForGrid(data);
     if (!demo) {
       const knownRooms = new Set(streams.filter((s) => s.house === "shugiin").map((s) => s.id));
-      streams.push(...(await probeShugiin(knownRooms)));
+      const [shu, san] = await Promise.all([probeShugiin(knownRooms), sangiinDiscovery.poll(data)]);
+      streams = shusantvSangiin.mergeStreams(data, [...streams, ...shu], san);
     }
     const ids = new Set(streams.map((s) => s.id));
     for (const id of tiles.keys()) if (!ids.has(id)) removeTile(id);
@@ -694,30 +704,31 @@ async function refresh() {
       const t = tiles.get(s.id);
       if (!t) { makeTile(s); continue; }
       // 既存タイルの表示情報を更新(プローブ仮名→正式名、開会待ち解除など)
+      const sourceChanged = t.stream.m3u8 !== s.m3u8;
       t.stream = s;
+      if (sourceChanged) t.hls.loadSource(s.m3u8);
       setTileName(t.el, s);
       t.el.classList.toggle("pending", !!s.pending);
     }
     relayout();
     // 当日以外の一覧は日付も出す(cron 停止で古い streams.json が残っていても気づけるように)
     const upd = new Date(updatedAt);
-    const sameDay = updatedAt && shusantvListing.jstDay(upd) === shusantvListing.jstDay(new Date());
+    const sameDay = Number.isFinite(upd.getTime()) && shusantvListing.jstDay(upd) === shusantvListing.jstDay(new Date());
     const stamp = sameDay
       ? upd.toLocaleTimeString("ja-JP", { timeZone: "Asia/Tokyo" })
-      : upd.toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" });
+      : Number.isFinite(upd.getTime()) ? upd.toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" }) : "未取得";
     statusEl.textContent =
       `${streams.length}件中継中 (衆${streams.filter(s=>s.house==="shugiin").length}/参${streams.filter(s=>s.house==="sangiin").length})` +
       ` 更新: ${stamp}` +
-      (namesCurrent ? "" : " （一覧が古いため委員会名は公式一覧の再取得待ち）") +
-      (errors.length ? ` ⚠ ${errors.join("; ")}` : "");
+      (namesCurrent ? "" : " （公式一覧の更新待ち・参院は配信状態を直接確認）") +
+      (errors.length ? ` ⚠ ${errors.join("; ")}` : "") + listingError;
     grid.querySelector(".empty")?.remove();
     if (!streams.length) grid.insertAdjacentHTML("beforeend", `<div class="empty">現在中継中の会議はありません</div>`);
   } catch (e) {
     statusEl.textContent = "一覧取得エラー: " + e;
   }
 }
-refresh();
-setInterval(refresh, 60_000);
+shusantvSangiin.startPolling(refresh);
 </script>
 </body>
 </html>

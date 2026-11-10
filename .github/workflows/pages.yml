@@ -38,8 +38,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Test listing and discovery
+        run: node --test lib/*.test.mjs
       - name: Scrape live streams
         run: node scripts/scrape.mjs
+        env:
+          PREVIOUS_STREAMS_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/streams.json
       - uses: actions/upload-pages-artifact@v3
         with:
           path: public
