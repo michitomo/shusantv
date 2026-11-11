@@ -4,8 +4,14 @@
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.shusantvCaptionHistory = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  // Recognizers rarely punctuate; close a finished result the way it is displayed.
+  const punctuate = text => !text || /[。、．，！？!?]$/.test(text) ? text
+    : /(です|ます|でした|ました|ません|ございます|であります)(ね|よ)?$/.test(text) ? text + '。' : text + '、';
+  const endsSentence = text => /[。．！？!?]$/.test(punctuate(text));
   // gapMs: silence that ends a paragraph (and, for ASR, sends it to proofreading).
-  function createHistory({ gapMs = 1500, maxEntries = 20000, clock = Date.now } = {}) {
+  // sentenceChars: an ASR paragraph of at least this many characters also ends at a
+  // finished sentence, so continuous speech is proofread without waiting for a pause.
+  function createHistory({ gapMs = 1500, maxEntries = 20000, clock = Date.now, sentenceChars = 30 } = {}) {
     const limit = Math.max(1, Math.floor(maxEntries) || 20000);
     let entries = [], nextId = 1, paragraph = 1;
     let slots = new Map(), finalizedThrough = -1, run = 0, active = true;
@@ -50,6 +56,13 @@
       closed.add(id);
       return true;
     }
+    function sentenceClosed() {
+      const tail = entries[entries.length - 1];
+      if (!tail || tail.paragraph !== paragraph || tail.interim || !endsSentence(tail.text)) return false;
+      let length = 0;
+      for (let i = entries.length - 1; i >= 0 && entries[i].paragraph === paragraph && length < sentenceChars; i--) length += entries[i].text.length;
+      return length >= sentenceChars && closeParagraph(paragraph);
+    }
     // A timer may settle final text, but lifecycle interruptions never do.
     function settle(now = Date.now(), token = run) {
       if (!active || token !== run || lastChange === null || now - lastChange < gapMs) return result();
@@ -68,7 +81,7 @@
     function updateAsr(results, now = Date.now(), token = run) {
       if (!active || token !== run) return result();
       let added = 0, changed = false;
-      const newTextParagraphs = [];
+      const newTextParagraphs = [], closedParagraphs = [];
       for (let index = 0; index < results.length; index++) {
         if (index <= finalizedThrough) continue;
         const value = results[index], text = clean(value.text), final = !!value.final;
@@ -102,7 +115,11 @@
           slots.delete(index);
           changed = true;
         }
-        if (final) finalizedThrough = index;
+        if (final) {
+          finalizedThrough = index;
+          // Before the next result is added, so it starts a new paragraph.
+          if (text && sentenceClosed()) closedParagraphs.push(paragraph);
+        }
       }
       // An engine may retract trailing interim results without finalizing them.
       for (const [index, entry] of slots) {
@@ -113,7 +130,6 @@
         }
       }
       trim();
-      const closedParagraphs = [];
       for (const id of asrParagraphs) {
         if (id !== paragraph && closeParagraph(id)) closedParagraphs.push(id);
       }
@@ -170,5 +186,5 @@
     }
     return { updateAsr, appendCue, settle, interrupt, resetRecognition, snapshot, tail, gapMs };
   }
-  return { createHistory };
+  return { createHistory, punctuate };
 });
