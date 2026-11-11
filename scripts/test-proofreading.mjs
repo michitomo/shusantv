@@ -57,6 +57,16 @@ export async function runProofreadingTests() {
     await check('row.querySelector(".caption-original").textContent', '校正する誤字、');
     await check('focusedId', 'sid9456');
 
+    // A finished sentence is sent at once; the pause timer is not needed.
+    await page.eval('window.sentenceTile={el:document.createElement("div"),stream:{house:"shugiin",id:"room98",name:"予算委員会"}}; sentenceTile.el.innerHTML=\'<div class="asr"></div>\'; window.sentenceCap=createCaption(sentenceTile); sentenceCap.updateAsr([{text:"二次医療圏ごとの地域医療構想の見直しについて大臣の見解を伺います",final:true},{text:"次に",final:false}],0);');
+    await until(() => requests.length === 2);
+    assert.deepEqual(JSON.parse(requests[1].body.messages[1].content), { text: '二次医療圏ごとの地域医療構想の見直しについて大臣の見解を伺います' });
+    await check('sentenceCap.panel.querySelectorAll(".cap-row").length', 2);
+    answer('二次医療圏ごとの地域医療構想の見直しについて、大臣の見解を伺います。');
+    await until(() => page.eval('sentenceCap.panel.querySelector(".caption-corrected").textContent !== ""'));
+    await page.eval('sentenceCap.stop();');
+    requests.splice(1, 1);
+
     // Cancelled responses cannot overwrite the original, even when abort is ignored.
     await page.eval('t.rec.emit([["過去の確定段落",true],["校正する誤字",true],["取消する文章",true]]); t.cap.settle(performance.now()+3001);');
     await until(() => requests.length === 2);

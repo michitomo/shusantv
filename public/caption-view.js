@@ -8,8 +8,7 @@
   let nextView = 0, lastSession = 0;
   // Orders a stream's views within the day; unique even when two start in the same millisecond.
   const newSession = () => (lastSession = Math.max(Date.now(), lastSession + 1));
-  const punct = text => !text || /[。、．，！？!?]$/.test(text) ? text
-    : /(です|ます|でした|ました|ません|ございます|であります)(ね|よ)?$/.test(text) ? text + '。' : text + '、';
+  const punct = text => shusantvCaptionHistory.punctuate(text);
   const clockFormat = new Intl.DateTimeFormat('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
   const clock = at => Number.isFinite(at) ? clockFormat.format(at) : '';
   const BUBBLE_PARTS = 6; // The bubble shows only the tail; the log has everything.
