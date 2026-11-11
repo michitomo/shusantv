@@ -15,11 +15,14 @@
     --shu: #5b9bd5;
     --san: #d57aa5;
   }
-  body { margin: 0; background: #050507; color: #eee;
+  body { margin: 0; background: #050507; color: #eee; height: 100vh; height: 100dvh; overflow: hidden;
+    display: flex; flex-direction: column;
     font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", system-ui, sans-serif; }
 
   /* ガラスのヘッダーバー */
-  header { display: flex; align-items: center; gap: 14px; padding: 8px 16px; flex-wrap: wrap;
+  /* backdrop-filter が重なり順の文脈を作るので、設定パネルが映像の下に潜らないよう header ごと前面に出す */
+  header { position: relative; z-index: 6; flex: none;
+    display: flex; align-items: center; gap: 14px; padding: 8px 16px; flex-wrap: wrap;
     background: var(--glass); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
     border-bottom: 1px solid var(--glass-border); }
   header h1 { font-size: 14px; margin: 0; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }
@@ -35,7 +38,14 @@
   label.auto { font-size: 11px; color: #9a9aa2; user-select: none; display: flex; align-items: center; gap: 4px; }
   label.auto input { accent-color: var(--accent); }
 
-  #grid { display: grid; gap: 8px; padding: 8px; height: calc(100vh - 49px); box-sizing: border-box; }
+  .headbtn { font: inherit; font-size: 11px; color: #c9c9cf; background: rgba(255,255,255,.06); cursor: pointer;
+    border: 1px solid var(--glass-border); border-radius: 999px; padding: 4px 12px; transition: border-color .2s, color .2s; }
+  .headbtn:hover, .headbtn:focus-visible { border-color: var(--accent); outline: none; }
+  .headbtn[aria-expanded="true"] { color: var(--accent); border-color: rgba(95,224,183,.5); }
+
+  /* 映像グリッド + 字幕ログ(サイドパネル)。狭い/縦長の画面ではログを下段に回す */
+  #stage { flex: 1; min-height: 0; display: flex; }
+  #grid { flex: 1; min-width: 0; min-height: 0; display: grid; gap: 8px; padding: 8px; box-sizing: border-box; }
 
   /* タイル: 枠は消し、わずかな境界線と影 */
   .tile { position: relative; background: #000; border-radius: 10px; overflow: hidden; cursor: pointer;
@@ -88,43 +98,77 @@
   .tile.shugiin .nshort { color: var(--shu); }
   .tile.sangiin .nshort { color: var(--san); }
 
-  /* 字幕バブル: ガラス */
-  .asr { position: absolute; left: 6%; right: 6%; bottom: 11%; pointer-events: none;
+  /* 字幕バブル: ガラス。映像上は直近の数行だけを流し、読み返しは字幕ログ(サイドパネル)で行う */
+  .asr { position: absolute; left: 6%; right: 6%; bottom: max(11%, 36px); pointer-events: none;
     display: flex; flex-direction: column; align-items: center; gap: 4px; }
   .asr:empty { display: none; }
   .asr .bubble { background: rgba(10, 10, 14, .58); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
     border: 1px solid var(--glass-border); border-radius: .6em; padding: .3em .65em;
-    font-size: max(3.4cqw, 14px); line-height: 1.35; font-weight: 600; color: #ffeebe;
+    font-size: clamp(14px, 3.4cqw, 28px); line-height: 1.35; font-weight: 600; color: #ffeebe;
     width: 88%; box-sizing: border-box;
-    text-align: left; white-space: pre-line; word-break: auto-phrase;
-    max-height: calc(1.35em * 3 + .6em - 4px); overflow: hidden;
-    overflow-anchor: none; overscroll-behavior: contain; scrollbar-width: thin; }
-  .asr .bubble p { margin: 0 0 .65em; }
-  .asr .bubble p:last-child { margin-bottom: 0; }
-  .asr .bubble .interim { color: #d7cba5; }
-  .tile.unmuted .asr { pointer-events: auto; bottom: 42px; }
-  .tile.unmuted .bubble { overflow-y: auto; max-height: min(35cqh, 300px); }
-  .bubble:focus-visible, .caption-return:focus-visible { outline: 2px solid var(--accent); }
-  .caption-controls { height: 44px; display: flex; align-items: center; justify-content: center; width: 88%; }
-  .caption-note, .caption-return { background: rgba(5,5,7,.85); color: #eee; font-size: 11px; }
-  .caption-note { padding: 2px 6px; border-radius: 4px; }
-  .caption-proof { display: block; font-size: 11px; color: #aaa; }
-  .caption-proof[hidden], .tile:not(.unmuted) .caption-proof { display: none; }
-  .caption-proof button { font: inherit; color: var(--accent); background: transparent; border: 0; min-height: 44px; padding: 8px; cursor: pointer; }
+    text-align: left; white-space: pre-line; word-break: auto-phrase; }
+  /* 下端揃えで、溢れた古い行を行単位で上に切り落とす(スクロールさせない) */
+  .bubble-lines { display: flex; flex-direction: column; justify-content: flex-end;
+    max-height: calc(1.35em * 3); overflow: hidden; }
+  .bubble-lines p { margin: 0; flex: none; }
+  .interim { color: #d7cba5; }
+  .tile.unmuted .asr { bottom: 42px; }
+  .caption-note { background: rgba(5,5,7,.85); color: #eee; font-size: 11px; padding: 2px 6px; border-radius: 4px; }
+  .bubble[hidden], .caption-note:empty, .tile:not(.unmuted) .caption-note { display: none; }
+
   #proofreadSettings { font-size: 12px; }
   #proofreadSettings summary { cursor: pointer; }
   .proofread-panel { position: absolute; z-index: 5; right: 12px; width: min(320px, calc(100vw - 48px)); padding: 12px;
-    background: #14141a; border: 1px solid var(--glass-border); border-radius: 8px; font-size: 12px; line-height: 1.5; }
+    background: #14141a; border: 1px solid var(--glass-border); border-radius: 8px; font-size: 12px; line-height: 1.5;
+    box-shadow: 0 12px 32px rgba(0,0,0,.6); }
   .proofread-panel a { display: block; color: var(--accent); }
   .proofread-panel p { margin: 8px 0; color: #aaa; }
-  .caption-return { border: 1px solid var(--accent); border-radius: 6px; min-height: 44px; padding: 6px 12px; cursor: pointer; }
-  .bubble:empty, .caption-note:empty, .tile:not(.unmuted) .caption-controls { display: none; }
+
+  /* 字幕ログ */
+  #capPanel { flex: none; width: clamp(280px, 27vw, 440px); min-height: 0; display: flex; flex-direction: column;
+    background: #0b0b10; border-left: 1px solid var(--glass-border); }
+  #capPanel[hidden] { display: none; }
+  .cap-head { display: flex; align-items: center; gap: 6px; padding: 8px; border-bottom: 1px solid var(--glass-border); }
+  .cap-head select { flex: 1; min-width: 0; font: inherit; font-size: 12px; color: #eee; background: rgba(255,255,255,.06);
+    border: 1px solid var(--glass-border); border-radius: 6px; padding: 5px 6px; }
+  .cap-head button { flex: none; font: inherit; font-size: 11px; color: #c9c9cf; background: transparent; cursor: pointer;
+    border: 1px solid var(--glass-border); border-radius: 6px; padding: 5px 8px; min-height: 28px; }
+  .cap-head button:hover:not(:disabled), .cap-head button:focus-visible { border-color: var(--accent); color: #fff; outline: none; }
+  .cap-head button:disabled { opacity: .35; cursor: default; }
+  .cap-head button.armed { border-color: var(--tally); color: #ff8a82; }
+  #capBody { flex: 1; min-height: 0; display: flex; }
+  .cap-empty { margin: auto; padding: 24px; color: #6a6a72; font-size: 12px; line-height: 1.8; text-align: center; }
+  .cap-view { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; position: relative; }
+  .cap-log { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin;
+    padding: 8px 12px 20px; font-size: 14px; line-height: 1.75; }
+  .cap-log:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .cap-log:empty::before { content: "字幕が始まると、ここに時刻付きで流れます。"; display: block; padding: 24px 8px;
+    color: #6a6a72; font-size: 12px; text-align: center; }
+  .cap-row { display: grid; grid-template-columns: 2.9em 1fr; column-gap: 10px; padding: 3px 0; }
+  .cap-row time { color: #74747e; font-size: 11px; font-variant-numeric: tabular-nums; padding-top: .42em; user-select: none; }
+  .cap-row p { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+  .cap-row .interim { color: #9a9aa2; }
+  .cap-divider { display: flex; align-items: center; gap: 8px; margin: 12px 0 6px; color: var(--accent);
+    font-size: 11px; font-weight: 700; letter-spacing: .06em; }
+  .cap-divider::after { content: ""; flex: 1; height: 1px; background: var(--glass-border); }
+  .caption-proof { display: block; font-size: 11px; color: #8a8a94; }
+  .caption-proof[hidden] { display: none; }
+  .caption-proof button { font: inherit; color: var(--accent); background: transparent; border: 0; padding: 4px 6px; cursor: pointer; }
+  .cap-status { padding: 4px 12px; font-size: 11px; color: #9a9aa2; border-top: 1px solid var(--glass-border); }
+  .cap-status:empty { display: none; }
+  .cap-return { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); white-space: nowrap;
+    font: inherit; font-size: 12px; font-weight: 700; color: #05130e; background: var(--accent); cursor: pointer;
+    border: 0; border-radius: 999px; padding: 7px 16px; box-shadow: 0 6px 20px rgba(0,0,0,.6); }
+  .cap-return[hidden] { display: none; }
+  .cap-foot { margin: 0; padding: 6px 12px; font-size: 10px; color: #6a6a72; border-top: 1px solid var(--glass-border); }
+  @media (max-width: 800px), (orientation: portrait) {
+    #stage { flex-direction: column; }
+    #capPanel { width: auto; height: 38%; border-left: 0; border-top: 1px solid var(--glass-border); }
+  }
   /* プレビューの字幕は広いタイルでだけ5行に拡大し、極小タイルでは映像が食われるので出さない */
   @container (min-width: 380px) {
-    #grid.focusmode .tile:not(.unmuted) .bubble {
-      font-size: max(4cqw, 14px);
-      max-height: calc(1.35em * 5 + .6em - 4px);
-    }
+    #grid.focusmode .tile:not(.unmuted) .bubble { font-size: max(4cqw, 14px); }
+    #grid.focusmode .tile:not(.unmuted) .bubble-lines { max-height: calc(1.35em * 5); }
   }
   /* 極小プレビューでも字幕は消さない。最新1行だけの細帯にして映像を残す */
   @container (max-width: 239px) {
@@ -132,8 +176,8 @@
     #grid.focusmode .tile:not(.unmuted) .bubble {
       width: 100%;
       padding: .15em .45em;
-      max-height: calc(1.35em + .3em);
     }
+    #grid.focusmode .tile:not(.unmuted) .bubble-lines { max-height: 1.35em; }
   }
   .pending video { opacity: .3; }
   .empty { padding: 48px; color: #6a6a72; text-align: center; letter-spacing: .1em; }
@@ -155,6 +199,7 @@
   <span class="status" id="status">読み込み中…</span>
   <input id="watch" placeholder="ウォッチ: 議員名,会派をカンマ区切り">
   <label class="auto"><input type="checkbox" id="autoFocus" checked> ヒットで自動フォーカス</label>
+  <button class="headbtn" id="capToggle" type="button" aria-controls="capPanel" aria-expanded="false">字幕ログ</button>
   <span class="status"><a href="transcript.html" style="color:#7da7c7;text-decoration:none">📝 文字起こし(参)</a></span>
   <details id="proofreadSettings">
     <summary>ASR校正</summary>
@@ -171,11 +216,25 @@
     <a href="https://www.webtv.sangiin.go.jp/webtv/" target="_blank" rel="noopener">参議院インターネット審議中継</a>
     （著作権は各議院に帰属。本サイトは非公式の個人用ビューアです）</span>
 </header>
-<div id="grid"></div>
+<div id="stage">
+  <div id="grid"></div>
+  <aside id="capPanel" aria-label="字幕ログ" hidden>
+    <div class="cap-head">
+      <select id="capSource" aria-label="字幕ログを表示する会議"></select>
+      <button id="capCopy" type="button" title="表示中の字幕ログを時刻付きでコピー">コピー</button>
+      <button id="capSave" type="button" title="表示中の字幕ログをテキストファイルで保存">保存</button>
+      <button id="capClear" type="button" title="この会議の本日分の字幕ログを端末から消去">消去</button>
+      <button id="capClose" type="button" aria-label="字幕ログを閉じる">✕</button>
+    </div>
+    <div id="capBody"><p class="cap-empty" id="capEmpty"></p></div>
+    <p class="cap-foot">本日分のみこの端末に保存し、翌日に自動で消去します。時刻は視聴した時刻（中継の遅延を含む）。</p>
+  </aside>
+</div>
 <button id="gate" type="button">クリックで開始（音声・発言認識の有効化）</button>
 <script src="listing.js"></script>
 <script src="sangiin-discovery.js"></script>
 <script src="caption-history.js"></script>
+<script src="caption-store.js"></script>
 <script src="caption-view.js"></script>
 <script src="openrouter.js"></script>
 <script>
@@ -253,13 +312,14 @@ gate.addEventListener("click", async function () {
     } catch (e) { statusEl.textContent = `⚠ ASR初期化: ${e}`; }
   }
   for (const t of tiles.values()) setupCaptions(t);
+  syncCapPanel();
 });
 
 // タイルの字幕・音声経路を用意する(ASR あり: ゲート前は actx が無いので何もしない。各経路とも再呼び出しは無害)
 function setupCaptions(t) {
   if (asrMode) initAudio(t);
   else if (t.stream.house === "sangiin") attachVtt(t);
-  t.cap?.focus(t.stream.id === focusedId);
+  syncCapPanel();
 }
 
 function initAudio(t) {
@@ -273,7 +333,8 @@ function initAudio(t) {
   startAsr(t); // 衆参とも同じASR字幕
 }
 
-// ---- 視聴中の字幕履歴 ----
+// ---- 視聴中の字幕 ----
+// 映像上のバブルは直近だけ。全文は時刻付きで字幕ログに残し、当日分を端末内(IndexedDB)に保持する
 function captionContext(stream) {
   const house = { shugiin: "衆議院", sangiin: "参議院" }[stream.house];
   const name = stream.nameConfirmed === false || /確認中|委員会室|本会議場/.test(stream.name || "") ? null : stream.name;
@@ -282,14 +343,102 @@ function captionContext(stream) {
     : stream.house === "shugiin" && shusantvListing.listingCurrent(lastListing) ? lastListing.sessionDate : null;
   return { house, name, date: /^\d{4}-\d{2}-\d{2}$/.test(day || "") ? day.replace(/^(\d+)-(\d+)-(\d+)$/, "$1年$2月$3日") : null };
 }
+const captionStore = shusantvCaptionStore.create({ today: () => shusantvListing.jstDay(new Date()) });
 function createCaption(t) {
   return shusantvCaptionView.create(t.el.querySelector(".asr"), {
+    store: captionStore, stream: `${t.stream.house}:${t.stream.id}`,
     getContext: () => captionContext(t.stream || {}),
     isEnabled: () => asrMode && proofreadToggle.checked,
     submit(job, receive) { proofreadListeners.set(job.id, receive); proofreader.submit(job); },
     cancel(id) { proofreadListeners.delete(id); proofreader.cancel(id); },
   });
 }
+
+// ---- 字幕ログ(サイドパネル) ----
+// 既定では音声を出している会議に追従する。セレクトで固定すれば、音声を切り替えずに別の会議を読み返せる
+const capPanel = document.getElementById("capPanel"), capBody = document.getElementById("capBody");
+const capSource = document.getElementById("capSource"), capToggle = document.getElementById("capToggle");
+const capEmpty = document.getElementById("capEmpty");
+const capButtons = ["capCopy", "capSave", "capClear"].map((id) => document.getElementById(id));
+let capPinned = "", capShown = null, capOptions = "";
+const capLabel = (s) => `${s.house === "shugiin" ? "衆" : "参"} ${s.name}`;
+function capTarget() {
+  if (tiles.has(capPinned)) return capPinned;
+  if (tiles.has(focusedId)) return focusedId;
+  return tiles.has(capShown) ? capShown : tiles.keys().next().value ?? null;
+}
+function syncCapPanel() {
+  if (capPinned && !tiles.has(capPinned)) capPinned = "";
+  const id = capTarget(), t = tiles.get(id), view = capPanel.hidden ? null : t?.cap ?? null;
+  capShown = id;
+  const options = [["", t && !capPinned ? `音声に追従 — ${capLabel(t.stream)}` : "音声に追従"],
+    ...Array.from(tiles.values(), (o) => [o.stream.id, capLabel(o.stream)])];
+  if (capOptions !== JSON.stringify(options)) {
+    capOptions = JSON.stringify(options);
+    capSource.replaceChildren(...options.map(([value, label]) => Object.assign(document.createElement("option"), { value, textContent: label })));
+  }
+  capSource.value = capPinned;
+  for (const button of capButtons) button.disabled = !view;
+  if (capPanel.hidden) return;
+  const node = view ? view.panel : capEmpty;
+  if (capBody.firstChild !== node || capBody.children.length !== 1) {
+    capBody.replaceChildren(node);
+    view?.shown();
+  }
+  capEmpty.textContent = document.getElementById("gate") ? "クリックで開始すると、ここに字幕が時刻付きで流れます。"
+    : !t ? "中継中の会議はありません。"
+    : "この会議には字幕がありません（このブラウザでは参議院の公式字幕のみ表示できます）。";
+}
+function showCaptions(id) { capPinned = id; syncCapPanel(); }
+function setCapPanel(open, remember = true) {
+  capPanel.hidden = !open;
+  capToggle.setAttribute("aria-expanded", String(open));
+  if (remember) localStorage.setItem("shusantv.captionPanel", open ? "1" : "0");
+  syncCapPanel();
+  relayout();
+  if (open) tiles.get(capShown)?.cap?.shown(); // 非表示中はスクロール位置を保てないので最新へ戻す
+}
+capToggle.addEventListener("click", () => setCapPanel(capPanel.hidden));
+document.getElementById("capClose").addEventListener("click", () => { setCapPanel(false); capToggle.focus?.(); });
+capSource.addEventListener("change", () => showCaptions(capSource.value));
+function capText() {
+  const t = tiles.get(capShown), body = t?.cap?.text();
+  if (!body) return "";
+  const c = captionContext(t.stream);
+  return `${[c.house, c.name ?? t.stream.name, c.date].filter(Boolean).join(" ")}\n${body}\n`;
+}
+function capFlash(button, text) {
+  const label = button.dataset.label ?? (button.dataset.label = button.textContent);
+  button.textContent = text;
+  clearTimeout(button.flashTimer);
+  button.flashTimer = setTimeout(() => { button.textContent = label; button.classList.remove("armed"); }, 2500);
+}
+capButtons[0].addEventListener("click", async function () {
+  const text = capText();
+  if (!text) return capFlash(this, "字幕なし");
+  try { await navigator.clipboard.writeText(text); capFlash(this, "コピー済み"); }
+  catch { capFlash(this, "コピー不可"); }
+});
+capButtons[1].addEventListener("click", function () {
+  const text = capText(), t = tiles.get(capShown);
+  if (!text) return capFlash(this, "字幕なし");
+  const link = Object.assign(document.createElement("a"), {
+    href: URL.createObjectURL(new Blob([text], { type: "text/plain;charset=utf-8" })),
+    download: `字幕_${t.stream.name}_${shusantvListing.jstDay(new Date())}.txt`,
+  });
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 10_000);
+});
+// 消去は取り消せないので2回押しで確定する
+capButtons[2].addEventListener("click", function () {
+  if (!this.classList.contains("armed")) { this.classList.add("armed"); return capFlash(this, "本当に消去？"); }
+  this.classList.remove("armed");
+  tiles.get(capShown)?.cap?.clear();
+  capFlash(this, "消去済み");
+});
+// タブを閉じる・隠す直前に、保存待ちの段落を書き出す
+window.addEventListener("pagehide", () => { for (const t of tiles.values()) t.cap?.flush(); });
+document.addEventListener("visibilitychange", () => { if (document.hidden) for (const t of tiles.values()) t.cap?.flush(); });
 
 // ---- 衆参共通: ブラウザ内蔵オンデバイス音声認識 (Chrome 139+) ----
 // 注意: SODA(SpeechRecognition.install)導入直後はChrome完全再起動が必要。
@@ -475,7 +624,7 @@ function shortName(name) {
   return NAME_ABBR[s] ?? s;
 }
 function setTileName(el, s) {
-  el.setAttribute("aria-label", `${s.name}。Enterキーで音声と字幕履歴を切り替え`);
+  el.setAttribute("aria-label", `${s.name}。Enterキーで音声を切り替え`);
   el.querySelector(".nfull").textContent = `${s.time ?? ""} ${s.name}`.trim();
   el.querySelector(".nshort").textContent = shortName(s.name);
 }
@@ -540,7 +689,6 @@ function makeTile(s) {
   grid.appendChild(el);
   tiles.set(s.id, t);
   setupCaptions(t);
-  t.cap?.focus(false);
 }
 
 function removeTile(id) {
@@ -554,6 +702,7 @@ function removeTile(id) {
   t.el.remove();
   tiles.delete(id);
   if (focusedId === id) { focusedId = null; manualFocus = false; }
+  syncCapPanel();
   relayout();
 }
 
@@ -580,10 +729,10 @@ function applyFocus() {
       if (on && t.video.paused) t.video.play().catch(() => {});
     }
     t.el.classList.toggle("unmuted", on);
-    t.cap?.focus(on);
     t.el.querySelector(".muteicon").textContent = on ? "🔊" : "🔇";
     t.hls.nextLevel = on || allHigh ? t.highest : t.lowest;
   }
+  syncCapPanel();
   relayout();
 }
 
@@ -611,7 +760,6 @@ setInterval(adjustQuality, 15_000);
 function relayout() {
   const n = tiles.size;
   if (!n) return;
-  grid.style.height = `calc(100vh - ${document.querySelector("header").offsetHeight}px)`;
   const W = grid.clientWidth, H = grid.clientHeight, GAP = 8;
   for (const t of tiles.values()) {
     t.el.style.gridArea = "";
@@ -704,7 +852,9 @@ function relayout() {
   grid.style.justifyContent = "center";
   grid.style.alignContent = "center";
 }
-window.addEventListener("resize", relayout);
+// ヘッダーの折り返しや字幕ログの開閉でもグリッドの寸法は変わるので、窓ではなくグリッド自体を見る
+if (window.ResizeObserver) new ResizeObserver(relayout).observe(grid);
+else window.addEventListener("resize", relayout);
 
 // ---- 一覧取得 ----
 // 衆議院は m3u8 が CORS 開放されているためブラウザから全 room を直接プローブできる。
@@ -763,11 +913,11 @@ async function refresh() {
         t.captionSourceChanging = true;
         t.hls.loadSource(s.m3u8);
         if (t.audio) startAsr(t); else setupCaptions(t);
-        t.cap?.focus(focusedId === s.id);
       }
       setTileName(t.el, s);
       t.el.classList.toggle("pending", !!s.pending);
     }
+    syncCapPanel();
     relayout();
     // 当日以外の一覧は日付も出す(cron 停止で古い streams.json が残っていても気づけるように)
     const upd = new Date(updatedAt);
@@ -785,6 +935,10 @@ async function refresh() {
   } catch (e) {
     statusEl.textContent = "一覧取得エラー: " + e;
   }
+}
+{
+  const saved = localStorage.getItem("shusantv.captionPanel");
+  setCapPanel(saved ? saved === "1" : window.innerWidth >= 900, false);
 }
 shusantvSangiin.startPolling(refresh);
 </script>

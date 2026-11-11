@@ -48,11 +48,11 @@ export async function runProofreadingTests() {
     await page.eval('t.cap.settle(performance.now()+10000);');
     assert.equal(requests.length, 1, 'same closed paragraph is not charged twice');
     answer('校正した文章');
-    await until(() => page.eval('!!t.el.querySelector(".caption-corrected:not([hidden])")'));
+    await until(() => page.eval('!!t.cap.panel.querySelector(".caption-corrected:not([hidden])")'));
     await check('t.cap.tail(100).includes("校正する誤字")');
     await check('t.cap.tail(100).includes("校正した文章")', false);
     await check('proofreadStatus.textContent.includes("$0.0010")');
-    await page.eval('window.row=t.el.querySelectorAll(".bubble p")[1]; row.querySelector("button").click();');
+    await page.eval('window.row=t.cap.panel.querySelectorAll(".cap-row")[1]; row.querySelector("button").click();');
     await check('row.querySelector(".caption-original").hidden', false);
     await check('row.querySelector(".caption-original").textContent', '校正する誤字、');
     await check('focusedId', 'sid9456');
@@ -64,23 +64,23 @@ export async function runProofreadingTests() {
     assert.equal(requests[1].signal.aborted, true);
     answer('遅延した不要な返答');
     await delay(0);
-    await check('t.el.textContent.includes("遅延した不要な返答")', false);
-    await check('t.el.textContent.includes("校正した文章")');
+    await check('document.body.textContent.includes("遅延した不要な返答")', false);
+    await check('t.cap.panel.textContent.includes("校正した文章")');
     await check('proofreadStatus.textContent.includes("不明1件")');
 
     // Error -> explicit retry, then keep original visible while reading history.
     await page.eval('proofreadToggle.checked=true; proofreadToggle.dispatchEvent(new Event("change")); t.rec.emit([["過去の確定段落",true],["校正する誤字",true],["取消する文章",true],["再試行する原文",true]]); t.cap.settle(performance.now()+3001);');
     await until(() => requests.length === 3);
     pending.shift()(new Response('fixture failure', { status: 429 }));
-    await until(() => page.eval('t.el.textContent.includes("校正失敗")'));
+    await until(() => page.eval('t.cap.panel.textContent.includes("校正失敗")'));
     assert.equal(requests.length, 3, 'no automatic charged retry');
-    await page.eval('window.row=t.el.querySelectorAll(".bubble p")[3]; row.querySelectorAll("button")[1].click();');
+    await page.eval('window.row=t.cap.panel.querySelectorAll(".cap-row")[3]; row.querySelectorAll("button")[1].click();');
     await until(() => requests.length === 4);
-    await page.eval('window.bubble=t.el.querySelector(".bubble"); Object.defineProperties(bubble,{scrollHeight:{value:1000},clientHeight:{value:100}}); bubble.scrollTop=100; bubble.dispatchEvent(new Event("scroll"));');
+    await page.eval('window.log=t.cap.panel.querySelector(".cap-log"); Object.defineProperties(log,{scrollHeight:{value:1000},clientHeight:{value:100}}); log.scrollTop=100; log.dispatchEvent(new Event("scroll"));');
     answer('再試行後の校正案');
     await until(() => page.eval('row.querySelector(".caption-corrected").textContent !== ""'));
     await check('row.querySelector(".caption-original").hidden', false);
-    await check('bubble.scrollTop', 100);
+    await check('log.scrollTop', 100);
 
     // Settings change revokes consent and pending work without exposing credentials.
     await page.eval('t.rec.emit([["過去の確定段落",true],["校正する誤字",true],["取消する文章",true],["再試行する原文",true],["設定変更の原文",true]]); t.cap.settle(performance.now()+3001);');
@@ -91,7 +91,7 @@ export async function runProofreadingTests() {
     assert.equal(requests[4].signal.aborted, true);
     answer('取り消し済み');
     await delay(0);
-    await check('t.el.textContent.includes("取り消し済み")', false);
+    await check('document.body.textContent.includes("取り消し済み")', false);
     await check('document.body.textContent.includes("fixture-key-not-real")', false);
     await check('captionContext({house:"shugiin",name:"衆院会議名確認中",nameConfirmed:false}).name', null);
     await check('captionContext({house:"other",nameConfirmed:false}).house === undefined');
@@ -104,7 +104,7 @@ export async function runProofreadingTests() {
     await check('oldCap !== t.cap');
     assert.equal(requests[5].signal.aborted, true);
     answer('前の配信の返答'); await delay(0);
-    await check('t.el.textContent.includes("前の配信の返答")', false);
+    await check('document.body.textContent.includes("前の配信の返答")', false);
     await page.eval('t.hls.events[Hls.Events.MANIFEST_PARSED](); t.rec.emit([["削除前の原文",true]]); t.cap.settle(performance.now()+3001);');
     await until(() => requests.length === 7);
     await page.eval('removeTile("sid9456")');
