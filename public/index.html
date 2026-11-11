@@ -2,6 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>shusantv — 国会中継グリッド</title>
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.20/dist/hls.min.js"></script>
 <style>
@@ -43,6 +44,7 @@
     box-shadow: 0 4px 24px rgba(0,0,0,.5);
     transition: outline-color .25s, box-shadow .25s, filter .25s; }
   .tile:hover { filter: brightness(1.06); }
+  .tile:focus-visible { outline: 2px solid var(--accent); }
   .tile.unmuted { outline: 2px solid var(--accent); outline-offset: -2px;
     box-shadow: 0 4px 28px rgba(95,224,183,.18); }
   .tile.hit { outline: 2px solid var(--tally); outline-offset: -2px;
@@ -88,7 +90,7 @@
 
   /* 字幕バブル: ガラス */
   .asr { position: absolute; left: 6%; right: 6%; bottom: 11%; pointer-events: none;
-    display: flex; justify-content: center; }
+    display: flex; flex-direction: column; align-items: center; gap: 4px; }
   .asr:empty { display: none; }
   .asr .bubble { background: rgba(10, 10, 14, .58); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
     border: 1px solid var(--glass-border); border-radius: .6em; padding: .3em .65em;
@@ -96,8 +98,27 @@
     width: 88%; box-sizing: border-box;
     text-align: left; white-space: pre-line; word-break: auto-phrase;
     max-height: calc(1.35em * 3 + .6em - 4px); overflow: hidden;
-    display: flex; flex-direction: column; justify-content: flex-end; }
-  .asr .bubble .old { color: #a9a9a2; }
+    overflow-anchor: none; overscroll-behavior: contain; scrollbar-width: thin; }
+  .asr .bubble p { margin: 0 0 .65em; }
+  .asr .bubble p:last-child { margin-bottom: 0; }
+  .asr .bubble .interim { color: #d7cba5; }
+  .tile.unmuted .asr { pointer-events: auto; bottom: 42px; }
+  .tile.unmuted .bubble { overflow-y: auto; max-height: min(35cqh, 300px); }
+  .bubble:focus-visible, .caption-return:focus-visible { outline: 2px solid var(--accent); }
+  .caption-controls { height: 44px; display: flex; align-items: center; justify-content: center; width: 88%; }
+  .caption-note, .caption-return { background: rgba(5,5,7,.85); color: #eee; font-size: 11px; }
+  .caption-note { padding: 2px 6px; border-radius: 4px; }
+  .caption-proof { display: block; font-size: 11px; color: #aaa; }
+  .caption-proof[hidden], .tile:not(.unmuted) .caption-proof { display: none; }
+  .caption-proof button { font: inherit; color: var(--accent); background: transparent; border: 0; min-height: 44px; padding: 8px; cursor: pointer; }
+  #proofreadSettings { font-size: 12px; }
+  #proofreadSettings summary { cursor: pointer; }
+  .proofread-panel { position: absolute; z-index: 5; right: 12px; width: min(320px, calc(100vw - 48px)); padding: 12px;
+    background: #14141a; border: 1px solid var(--glass-border); border-radius: 8px; font-size: 12px; line-height: 1.5; }
+  .proofread-panel a { display: block; color: var(--accent); }
+  .proofread-panel p { margin: 8px 0; color: #aaa; }
+  .caption-return { border: 1px solid var(--accent); border-radius: 6px; min-height: 44px; padding: 6px 12px; cursor: pointer; }
+  .bubble:empty, .caption-note:empty, .tile:not(.unmuted) .caption-controls { display: none; }
   /* プレビューの字幕は広いタイルでだけ5行に拡大し、極小タイルでは映像が食われるので出さない */
   @container (min-width: 380px) {
     #grid.focusmode .tile:not(.unmuted) .bubble {
@@ -118,7 +139,7 @@
   .empty { padding: 48px; color: #6a6a72; text-align: center; letter-spacing: .1em; }
 
   /* 開始ゲート */
-  #gate { position: fixed; inset: 0; background: rgba(5,5,7,.6); backdrop-filter: blur(18px);
+  #gate { border: 0; color: inherit; font: inherit; appearance: none; position: fixed; inset: 0; background: rgba(5,5,7,.6); backdrop-filter: blur(18px);
     display: flex; flex-direction: column; gap: 10px; align-items: center; justify-content: center;
     cursor: pointer; z-index: 10; }
   #gate::before { content: "SHUSANTV"; font-size: 13px; font-weight: 800; letter-spacing: .3em; color: #9a9aa2; }
@@ -135,19 +156,28 @@
   <input id="watch" placeholder="ウォッチ: 議員名,会派をカンマ区切り">
   <label class="auto"><input type="checkbox" id="autoFocus" checked> ヒットで自動フォーカス</label>
   <span class="status"><a href="transcript.html" style="color:#7da7c7;text-decoration:none">📝 文字起こし(参)</a></span>
+  <details id="proofreadSettings">
+    <summary>ASR校正</summary>
+    <div class="proofread-panel">
+      <label><input id="proofread" type="checkbox" disabled> 自動校正（全タイル）</label>
+      <p>ON後に確定するASR段落をOpenRouterとモデル提供元へ送信します。段落ごとに料金が発生し、取消でも課金される場合があります。校正案は元字幕と見比べてください。</p>
+      <p>最大4,000字／段落・同時1件。エラーは自動再送しません。</p>
+      <span id="proofreadStatus" role="status"></span>
+      <a href="transcript.html#settings" target="_blank" rel="noopener">BYOK・モデル設定（要約と共用）</a>
+    </div>
+  </details>
   <span class="status credit">映像:
     <a href="https://www.shugiintv.go.jp/jp/" target="_blank" rel="noopener">衆議院インターネット審議中継</a> /
     <a href="https://www.webtv.sangiin.go.jp/webtv/" target="_blank" rel="noopener">参議院インターネット審議中継</a>
     （著作権は各議院に帰属。本サイトは非公式の個人用ビューアです）</span>
 </header>
 <div id="grid"></div>
-<div id="gate">クリックで開始（音声・発言認識の有効化）</div>
-<script type="module">
-// BudouX: 文節相当の区切りで字幕バブルを組む(Google製・Chrome の word-break:auto-phrase と同等)
-import { loadDefaultJapaneseParser } from "https://cdn.jsdelivr.net/npm/budoux@0.6.2/+esm";
-window.budouxParser = loadDefaultJapaneseParser();
-</script>
+<button id="gate" type="button">クリックで開始（音声・発言認識の有効化）</button>
 <script src="listing.js"></script>
+<script src="sangiin-discovery.js"></script>
+<script src="caption-history.js"></script>
+<script src="caption-view.js"></script>
+<script src="openrouter.js"></script>
 <script>
 const grid = document.getElementById("grid");
 const statusEl = document.getElementById("status");
@@ -164,6 +194,43 @@ if (!asrMode) {
   document.body.classList.add("noasr");
   gate.textContent = "クリックで開始（音声の有効化）";
 }
+
+// BYOK設定は要約ページと共有。保存済みキーだけでは自動送信しない。
+const proofreadToggle = document.getElementById("proofread");
+const proofreadStatus = document.getElementById("proofreadStatus");
+const proofreadListeners = new Map(), proofreadRunning = new Set();
+let proofreadCost = 0, proofreadUnknownCost = 0;
+const proofreader = OpenRouterProofreader.createProofreader({
+  getConfig: () => OpenRouterProofreader.readConfig(localStorage),
+  onChange(event) {
+    if (event.status === "running") proofreadRunning.add(event.id);
+    if (["done", "error", "cancelled"].includes(event.status) && proofreadRunning.delete(event.id)) {
+      if (Number.isFinite(event.cost)) proofreadCost += event.cost;
+      else proofreadUnknownCost++;
+    }
+    proofreadListeners.get(event.id)?.(event);
+    updateProofreadSettings();
+  },
+});
+function updateProofreadSettings() {
+  const config = OpenRouterProofreader.readConfig(localStorage);
+  proofreadToggle.disabled = !asrMode || !config.key;
+  proofreadStatus.textContent = !asrMode ? "ブラウザASRのみ対応（公式字幕は送信しません）" : !config.key ? "BYOKキー未設定" :
+    `${config.model} · この表示中のAPI返却額 $${proofreadCost.toFixed(4)}${proofreadUnknownCost ? ` + 不明${proofreadUnknownCost}件` : ""}`;
+}
+function stopProofreading() {
+  proofreadToggle.checked = false;
+  for (const t of tiles.values()) t.cap?.cancelProofreading();
+  proofreader.clear();
+}
+proofreadToggle.addEventListener("change", () => {
+  updateProofreadSettings();
+  if (!proofreadToggle.checked || proofreadToggle.disabled) stopProofreading();
+});
+window.addEventListener("storage", event => {
+  if (event.key === "shusantv.aicfg" || event.key === null) { stopProofreading(); updateProofreadSettings(); }
+});
+updateProofreadSettings();
 
 // ---- 音声基盤 ----
 // Chromeでは muted な video の音声キャプチャが無音になる既知バグがあるため、
@@ -192,6 +259,7 @@ gate.addEventListener("click", async function () {
 function setupCaptions(t) {
   if (asrMode) initAudio(t);
   else if (t.stream.house === "sangiin") attachVtt(t);
+  t.cap?.focus(t.stream.id === focusedId);
 }
 
 function initAudio(t) {
@@ -205,83 +273,23 @@ function initAudio(t) {
   startAsr(t); // 衆参とも同じASR字幕
 }
 
-// ---- 字幕バブル ----
-// 直近FADE ms以内に出た文字だけ明色、それ以前はグレー。改行なし(自然折り返しのみ)。
-// ASR(認識セッションの全文を set)と参議院の公式字幕(cue を append)の両方から使う
-function createCaption(t) {
-  const asrEl = t.el.querySelector(".asr");
-  const FADE = 500, TS = "\u2009";
-  const IDLE_HIDE = 30_000; // 新しい発言が来なければ字幕を消す(散会後に残さない)
-  const KEEP = 600;         // append で溜める上限文字数(表示は末尾150字のみ)
-  let full = "";
-  let brightBase = 0; // この文字位置までは「古い」= グレー表示
-  let marks = [];     // [文字位置, 時刻] 新しい文字の出現記録(時間フェード用)
-  let lastGrowth = 0;
-
-  function render() {
-    const now = performance.now();
-    if (lastGrowth && now - lastGrowth > IDLE_HIDE) { asrEl.innerHTML = ""; return; }
-    for (const [len, tm] of marks) if (now - tm > FADE) brightBase = Math.max(brightBase, len);
-    marks = marks.filter(([, tm]) => now - tm <= FADE);
-    const text = full.slice(-150); // 表示は末尾のみ(3行高でクリップされる)
-    asrEl.innerHTML = "";
-    if (!text) return;
-    const b = document.createElement("div");
-    b.className = "bubble";
-    const inner = document.createElement("div"); // flex(下端寄せ)の単一子要素
-    const phrases = window.budouxParser ? window.budouxParser.parse(text) : [text];
-    const oldParts = [], newParts = [];
-    let pos = full.length - text.length;
-    for (const ph of phrases) {
-      (pos + ph.length <= brightBase ? oldParts : newParts).push(ph);
-      pos += ph.length;
-    }
-    if (oldParts.length) {
-      const sp = document.createElement("span");
-      sp.className = "old";
-      sp.textContent = oldParts.join(TS) + (newParts.length ? TS : "");
-      inner.appendChild(sp);
-    }
-    if (newParts.length) {
-      const sp = document.createElement("span");
-      sp.textContent = newParts.join(TS);
-      inner.appendChild(sp);
-    }
-    b.appendChild(inner);
-    asrEl.appendChild(b);
-  }
-  const timer = setInterval(render, 200); // 結果が来なくてもフェードを進める
-
-  function set(text) {
-    if (text.length < full.length) { brightBase = 0; marks = []; } // セッション再開でリセット
-    if (text.length > full.length) { marks.push([full.length, performance.now()]); lastGrowth = performance.now(); }
-    full = text;
-    render();
-  }
-  return {
-    el: asrEl,
-    set,
-    // 末尾に追記。溜まりすぎたら先頭を切り詰め、位置情報も詰める(リセット扱いにしない)
-    append(text) {
-      let next = full + text;
-      if (next.length > KEEP * 2) {
-        const cut = next.length - KEEP;
-        full = full.slice(cut);
-        next = next.slice(cut);
-        brightBase = Math.max(0, brightBase - cut);
-        marks = marks.map(([len, tm]) => [Math.max(0, len - cut), tm]);
-      }
-      set(next);
-    },
-    tail: (n) => full.slice(-n),
-    stop() { clearInterval(timer); },
-  };
+// ---- 視聴中の字幕履歴 ----
+function captionContext(stream) {
+  const house = { shugiin: "衆議院", sangiin: "参議院" }[stream.house];
+  const name = stream.nameConfirmed === false || /確認中|委員会室|本会議場/.test(stream.name || "") ? null : stream.name;
+  const day = stream.programStart ? shusantvSangiin.day(stream.programStart)
+    : stream.house === "sangiin" && shusantvSangiin.sameDayListing(lastListing) ? lastListing.sangiinSessionDate
+    : stream.house === "shugiin" && shusantvListing.listingCurrent(lastListing) ? lastListing.sessionDate : null;
+  return { house, name, date: /^\d{4}-\d{2}-\d{2}$/.test(day || "") ? day.replace(/^(\d+)-(\d+)-(\d+)$/, "$1年$2月$3日") : null };
 }
-// ポーズ(isFinal)や字幕cueの末尾に句読点を補う: 文末形なら「。」、続きそうなら「、」
-const punct = (s) =>
-  !s || /[。、．，！？!?]$/.test(s) ? s
-  : /(です|ます|でした|ました|ません|ございます|であります)(ね|よ)?$/.test(s) ? s + "。"
-  : s + "、";
+function createCaption(t) {
+  return shusantvCaptionView.create(t.el.querySelector(".asr"), {
+    getContext: () => captionContext(t.stream || {}),
+    isEnabled: () => asrMode && proofreadToggle.checked,
+    submit(job, receive) { proofreadListeners.set(job.id, receive); proofreader.submit(job); },
+    cancel(id) { proofreadListeners.delete(id); proofreader.cancel(id); },
+  });
+}
 
 // ---- 衆参共通: ブラウザ内蔵オンデバイス音声認識 (Chrome 139+) ----
 // 注意: SODA(SpeechRecognition.install)導入直後はChrome完全再起動が必要。
@@ -289,42 +297,59 @@ const punct = (s) =>
 function startAsr(t) {
   const dest = actx.createMediaStreamDestination();
   t.audio.src.connect(dest);
-  const rec = new SR();
-  rec.lang = "ja-JP";
-  rec.continuous = true;
-  rec.interimResults = true;
-  rec.processLocally = true;
-  applyPhrases(rec); // コンテキストバイアシング(ウォッチ語を優先語彙に)
   const cap = t.cap ?? (t.cap = createCaption(t));
-  const asrEl = cap.el;
-  let errors = 0;
-  rec.onresult = (e) => {
-    let full = "";
-    for (const r of e.results) full += r.isFinal ? punct(r[0].transcript) : r[0].transcript;
-    cap.set(full);
-    detect(t, cap.tail(100));
-    errors = 0;
+  let rec = null, timer, errors = 0, alive = true, suspended = t.video.paused === true || t.captionSourceChanging;
+  function start() {
+    if (!alive || suspended || rec || errors > 5) return;
+    const current = rec = new SR(), token = cap.resetRecognition();
+    t.rec = current;
+    current.lang = "ja-JP";
+    current.continuous = current.interimResults = current.processLocally = true;
+    applyPhrases(current);
+    current.onresult = e => {
+      if (!alive || suspended || rec !== current) return;
+      cap.updateAsr(Array.from(e.results, r => ({ text: r[0].transcript, final: r.isFinal })), performance.now(), token);
+      detect(t, cap.tail(100));
+      errors = 0;
+    };
+    current.onerror = e => {
+      if (!alive || rec !== current) return;
+      errors++;
+      cap.message(e.error === "network"
+        ? "⚠ 音声認識モデルの準備後はChromeの完全再起動が必要な場合があります"
+        : `⚠ ASR: ${e.error}`);
+    };
+    current.onend = () => {
+      if (!alive || rec !== current) return;
+      rec = t.rec = null;
+      cap.interrupt(); // 認識再起動までの待ち時間は発言の間に数えない。
+      if (!suspended && errors <= 5) timer = setTimeout(start, 1000);
+    };
+    try { current.start(dest.stream.getAudioTracks()[0]); cap.message("🎤 認識待機…"); }
+    catch (error) { rec = t.rec = null; cap.interrupt(); cap.message(`⚠ ASR start: ${error.message}`); }
+  }
+  function interrupt() {
+    clearTimeout(timer);
+    const previous = rec;
+    rec = t.rec = null;
+    cap.interrupt();
+    previous?.abort();
+  }
+  const pause = () => { suspended = true; interrupt(); };
+  const play = () => { if (!t.captionSourceChanging) { suspended = false; start(); } };
+  t.resumeCaptions = play;
+  const stops = ["pause", "waiting", "seeking", "ended"];
+  for (const event of stops) t.video.addEventListener(event, pause);
+  t.video.addEventListener("playing", play);
+  t.stopCaptions = () => {
+    alive = false; interrupt();
+    t.resumeCaptions = null;
+    for (const event of stops) t.video.removeEventListener(event, pause);
+    t.video.removeEventListener("playing", play);
+    t.audio.src.disconnect(dest);
+    for (const track of dest.stream.getAudioTracks()) track.stop();
   };
-  rec.onerror = async (e) => {
-    // "network"は実際にはオンデバイス認識サービス未ロードの誤報告(crbug 520350511)。
-    // モデルinstall直後はChromeの完全再起動が必要
-    asrEl.textContent = e.error === "network"
-      ? "⚠ ASR: 音声認識モデル準備中の可能性。ダウンロード完了後、Chromeの完全再起動(⌘Q)が必要です"
-      : `⚠ ASR: ${e.error}`;
-    if (e.error === "language-not-supported" && SR.available) {
-      const a = await SR.available({ langs: ["ja-JP"], processLocally: true });
-      asrEl.textContent = `⚠ ASR: lang-not-supported (available=${a})`;
-      if (a === "downloadable") SR.install({ langs: ["ja-JP"], processLocally: true });
-    }
-    if (++errors > 5) rec.onend = null;
-  };
-  const start = () => {
-    try { rec.start(dest.stream.getAudioTracks()[0]); asrEl.textContent = "🎤 認識待機…"; }
-    catch (err) { asrEl.textContent = `⚠ ASR start: ${err.message}`; }
-  };
-  rec.onend = () => setTimeout(start, 1000);
   start();
-  t.rec = rec;
 }
 
 // ---- 参議院: 公式字幕 (HLS の WebVTT トラック) ----
@@ -335,32 +360,46 @@ function attachVtt(t) {
   if (t.vtt) return;
   const { hls, video } = t;
   const cap = t.cap ?? (t.cap = createCaption(t));
-  const vtt = (t.vtt = { seen: new WeakSet(), lastText: "", lastEnd: -Infinity });
+  const vtt = (t.vtt = { seen: new WeakSet() });
+  let suspended = video.paused === true || t.captionSourceChanging;
   const onCues = (track) => {
+    if (suspended) return;
     for (const cue of Array.from(track.activeCues ?? [])) {
       if (vtt.seen.has(cue)) continue;
       vtt.seen.add(cue);
       const text = String(cue.text ?? "").replace(/\s*\n\s*/g, "").trim();
       if (!text) continue;
-      // 同じ字幕がセグメント境界で開始時刻ズレで再掲されるため、直前と同文で近接なら捨てる
-      if (text === vtt.lastText && cue.startTime - vtt.lastEnd <= 6) { vtt.lastEnd = Math.max(vtt.lastEnd, cue.endTime); continue; }
-      vtt.lastText = text;
-      vtt.lastEnd = cue.endTime;
-      cap.append(punct(text));
-      detect(t, cap.tail(100));
+      if (cap.append(text, cue.startTime, cue.endTime)) detect(t, cap.tail(100));
     }
   };
-  const hooked = new WeakSet();
+  const pause = () => { suspended = true; cap.interrupt(); };
+  const play = () => { if (!t.captionSourceChanging) { suspended = false; for (const track of Array.from(video.textTracks)) onCues(track); } };
+  t.resumeCaptions = play;
+  const stops = ["pause", "waiting", "seeking", "ended"];
+  for (const event of stops) video.addEventListener(event, pause);
+  video.addEventListener("playing", play);
+  const hooked = new Map();
   const hook = (track) => {
     if (hooked.has(track) || (track.kind !== "subtitles" && track.kind !== "captions")) return;
-    hooked.add(track);
-    track.addEventListener("cuechange", () => onCues(track));
+    const handler = () => onCues(track);
+    hooked.set(track, handler);
+    track.addEventListener("cuechange", handler);
   };
   for (const track of Array.from(video.textTracks)) hook(track);
-  video.textTracks.addEventListener("addtrack", (e) => hook(e.track));
+  const added = e => hook(e.track);
+  video.textTracks.addEventListener("addtrack", added);
   // マニフェストに字幕トラックがあれば選択する(解析済みなら即時、未解析なら更新イベントで)
   const select = () => { if (hls.subtitleTracks.length && hls.subtitleTrack < 0) hls.subtitleTrack = 0; };
   hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, select);
+  t.stopCaptions = () => {
+    suspended = true;
+    t.resumeCaptions = null;
+    for (const event of stops) video.removeEventListener(event, pause);
+    video.removeEventListener("playing", play);
+    video.textTracks.removeEventListener("addtrack", added);
+    for (const [track, handler] of hooked) track.removeEventListener("cuechange", handler);
+    hls.off(Hls.Events.SUBTITLE_TRACKS_UPDATED, select);
+  };
   select();
 }
 
@@ -436,12 +475,15 @@ function shortName(name) {
   return NAME_ABBR[s] ?? s;
 }
 function setTileName(el, s) {
+  el.setAttribute("aria-label", `${s.name}。Enterキーで音声と字幕履歴を切り替え`);
   el.querySelector(".nfull").textContent = `${s.time ?? ""} ${s.name}`.trim();
   el.querySelector(".nshort").textContent = shortName(s.name);
 }
 
 function makeTile(s) {
   const el = document.createElement("div");
+  el.tabIndex = 0;
+  el.setAttribute("role", "group");
   el.className = `tile ${s.house}` + (s.pending ? " pending" : "");
   el.innerHTML = `
     <video muted autoplay playsinline crossorigin="anonymous"></video>
@@ -472,10 +514,13 @@ function makeTile(s) {
   const t = { el, video, hls, stream: s, lowest: 0, highest: 0, audio: null, hitUntil: 0 };
 
   hls.on(Hls.Events.MANIFEST_PARSED, () => {
+    t.captionSourceChanging = false;
     t.lowest = hls.levels.reduce((a, l, i) => (l.bitrate < hls.levels[a].bitrate ? i : a), 0);
     t.highest = hls.levels.reduce((a, l, i) => (l.bitrate > hls.levels[a].bitrate ? i : a), 0);
     hls.nextLevel = t.lowest;
-    video.play().catch(() => {});
+    video.play().then(() => {
+      if (tiles.get(s.id) === t && !t.captionSourceChanging) t.resumeCaptions?.();
+    }).catch(() => {});
   });
   hls.on(Hls.Events.LEVEL_SWITCHED, (_, d) => {
     el.querySelector(".quality").textContent = d.level === t.highest && t.highest !== t.lowest ? "HD" : "";
@@ -484,21 +529,27 @@ function makeTile(s) {
   hls.on(Hls.Events.ERROR, (_, data) => {
     if (!data.fatal) return;
     if (++fails > 3) { removeTile(s.id); return; } // 中継終了済みのタイルは畳む
-    setTimeout(() => hls.loadSource(s.m3u8), 5000);
+    setTimeout(() => { if (tiles.get(s.id) === t) hls.loadSource(t.stream.m3u8); }, 5000);
   });
   hls.loadSource(s.m3u8);
   hls.attachMedia(video);
   el.addEventListener("click", () => clickTile(s.id));
+  el.addEventListener("keydown", e => {
+    if (e.target === el && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); clickTile(s.id); }
+  });
   grid.appendChild(el);
   tiles.set(s.id, t);
   setupCaptions(t);
+  t.cap?.focus(false);
 }
 
 function removeTile(id) {
   const t = tiles.get(id);
   if (!t) return;
-  if (t.rec) { t.rec.onend = null; t.rec.stop(); }
+  t.stopCaptions?.();
   t.cap?.stop();
+  t.audio?.src.disconnect();
+  t.audio?.gain.disconnect();
   t.hls.destroy();
   t.el.remove();
   tiles.delete(id);
@@ -529,6 +580,7 @@ function applyFocus() {
       if (on && t.video.paused) t.video.play().catch(() => {});
     }
     t.el.classList.toggle("unmuted", on);
+    t.cap?.focus(on);
     t.el.querySelector(".muteicon").textContent = on ? "🔊" : "🔇";
     t.hls.nextLevel = on || allHigh ? t.highest : t.lowest;
   }
@@ -665,10 +717,10 @@ async function probeShugiin(known) {
     SHU_ROOMS.filter((r) => !known.has(r)).map(async (roomId) => {
       try {
         const url = `https://hlslive.shugiintv.go.jp/${roomId}/amlst:${roomId}/playlist.m3u8`;
-        const res = await fetch(url, { cache: "no-store" });
+        const res = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(6000) });
         if (res.ok && (await res.text()).includes("#EXTM3U"))
           found.push({
-            house: "shugiin", id: roomId, time: "", m3u8: url,
+            house: "shugiin", id: roomId, time: "", m3u8: url, nameConfirmed: false,
             name: shusantvListing.fallbackShugiinName(roomId),
           });
       } catch {}
@@ -677,16 +729,25 @@ async function probeShugiin(known) {
   return found;
 }
 
+const sangiinDiscovery = shusantvSangiin.createDiscovery();
+let lastListing = { streams: [], vod: [], errors: [] };
 async function refresh() {
   try {
-    const data = await (await fetch("streams.json" + location.search, { cache: "no-store" })).json();
+    let listingError = "";
+    try {
+      const res = await fetch("streams.json" + location.search, { cache: "no-store", signal: AbortSignal.timeout(10_000) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      lastListing = await res.json();
+    } catch (e) { listingError = ` / 一覧更新待ち: ${e.message}`; }
+    const data = lastListing;
     const { updatedAt, errors = [] } = data;
     const demo = location.search.includes("demo");
     const namesCurrent = demo || shusantvListing.listingCurrent(data);
-    const streams = demo ? (data.streams ?? []) : shusantvListing.streamsForGrid(data);
+    let streams = demo ? (data.streams ?? []) : shusantvListing.streamsForGrid(data);
     if (!demo) {
       const knownRooms = new Set(streams.filter((s) => s.house === "shugiin").map((s) => s.id));
-      streams.push(...(await probeShugiin(knownRooms)));
+      const [shu, san] = await Promise.all([probeShugiin(knownRooms), sangiinDiscovery.poll(data)]);
+      streams = shusantvSangiin.mergeStreams(data, [...streams, ...shu], san);
     }
     const ids = new Set(streams.map((s) => s.id));
     for (const id of tiles.keys()) if (!ids.has(id)) removeTile(id);
@@ -694,30 +755,38 @@ async function refresh() {
       const t = tiles.get(s.id);
       if (!t) { makeTile(s); continue; }
       // 既存タイルの表示情報を更新(プローブ仮名→正式名、開会待ち解除など)
+      const sourceChanged = t.stream.m3u8 !== s.m3u8;
       t.stream = s;
+      if (sourceChanged) {
+        t.stopCaptions?.(); t.cap?.stop();
+        t.cap = t.vtt = t.rec = null;
+        t.captionSourceChanging = true;
+        t.hls.loadSource(s.m3u8);
+        if (t.audio) startAsr(t); else setupCaptions(t);
+        t.cap?.focus(focusedId === s.id);
+      }
       setTileName(t.el, s);
       t.el.classList.toggle("pending", !!s.pending);
     }
     relayout();
     // 当日以外の一覧は日付も出す(cron 停止で古い streams.json が残っていても気づけるように)
     const upd = new Date(updatedAt);
-    const sameDay = updatedAt && shusantvListing.jstDay(upd) === shusantvListing.jstDay(new Date());
+    const sameDay = Number.isFinite(upd.getTime()) && shusantvListing.jstDay(upd) === shusantvListing.jstDay(new Date());
     const stamp = sameDay
       ? upd.toLocaleTimeString("ja-JP", { timeZone: "Asia/Tokyo" })
-      : upd.toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" });
+      : Number.isFinite(upd.getTime()) ? upd.toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" }) : "未取得";
     statusEl.textContent =
       `${streams.length}件中継中 (衆${streams.filter(s=>s.house==="shugiin").length}/参${streams.filter(s=>s.house==="sangiin").length})` +
       ` 更新: ${stamp}` +
-      (namesCurrent ? "" : " （一覧が古いため委員会名は公式一覧の再取得待ち）") +
-      (errors.length ? ` ⚠ ${errors.join("; ")}` : "");
+      (namesCurrent ? "" : " （公式一覧の更新待ち・参院は配信状態を直接確認）") +
+      (errors.length ? ` ⚠ ${errors.join("; ")}` : "") + listingError;
     grid.querySelector(".empty")?.remove();
     if (!streams.length) grid.insertAdjacentHTML("beforeend", `<div class="empty">現在中継中の会議はありません</div>`);
   } catch (e) {
     statusEl.textContent = "一覧取得エラー: " + e;
   }
 }
-refresh();
-setInterval(refresh, 60_000);
+shusantvSangiin.startPolling(refresh);
 </script>
 </body>
 </html>
