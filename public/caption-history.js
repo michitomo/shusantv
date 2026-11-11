@@ -4,7 +4,8 @@
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.shusantvCaptionHistory = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
-  function createHistory({ gapMs = 3000, maxEntries = 20000, clock = Date.now } = {}) {
+  // gapMs: silence that ends a paragraph (and, for ASR, sends it to proofreading).
+  function createHistory({ gapMs = 1500, maxEntries = 20000, clock = Date.now } = {}) {
     const limit = Math.max(1, Math.floor(maxEntries) || 20000);
     let entries = [], nextId = 1, paragraph = 1;
     let slots = new Map(), finalizedThrough = -1, run = 0, active = true;
@@ -167,7 +168,7 @@
       active = true;
       return run;
     }
-    return { updateAsr, appendCue, settle, interrupt, resetRecognition, snapshot, tail };
+    return { updateAsr, appendCue, settle, interrupt, resetRecognition, snapshot, tail, gapMs };
   }
   return { createHistory };
 });

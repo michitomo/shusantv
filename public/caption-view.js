@@ -237,7 +237,7 @@
         render(history.updateAsr(results, now, token));
         render(history.settle(now, token));
         clearTimeout(settleTimer);
-        settleTimer = setTimeout(() => render(history.settle(performance.now(), token)), 3000);
+        settleTimer = setTimeout(() => render(history.settle(performance.now(), token)), history.gapMs);
       },
       settle: (now, token) => render(history.settle(now, token)),
       append(text, start, end) { const update = history.appendCue(text, start, end); render(update); return update.changed; },
