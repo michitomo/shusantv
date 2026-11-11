@@ -1,23 +1,36 @@
-// Viewing-session captions only: no storage and no speaker inference.
+// Viewing-session caption model: no storage here and no speaker inference.
 (function (root, factory) {
   const api = factory();
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.shusantvCaptionHistory = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
-  function createHistory({ gapMs = 3000, maxEntries = 2000 } = {}) {
-    const limit = Math.max(1, Math.floor(maxEntries) || 2000);
+  function createHistory({ gapMs = 3000, maxEntries = 20000, clock = Date.now } = {}) {
+    const limit = Math.max(1, Math.floor(maxEntries) || 20000);
     let entries = [], nextId = 1, paragraph = 1;
     let slots = new Map(), finalizedThrough = -1, run = 0, active = true;
     let lastChange = null, lastCue = null, cueEnd = null;
     const closed = new Set(), asrParagraphs = new Set();
     const clean = text => String(text || '').trim();
     const snapshot = () => entries.map(entry => ({ ...entry }));
-    const result = (added = 0, changed = false, newTextParagraphs = [], closedParagraphs = []) => ({
-      entries: snapshot(), added, changed, newTextParagraphs: [...new Set(newTextParagraphs)],
-      closedParagraphs
-    });
+    // Views apply `updated`/`removed` so a day-long log costs O(change) per result.
+    let touched = new Set(), removed = [];
+    const result = (added = 0, changed = false, newTextParagraphs = [], closedParagraphs = []) => {
+      const out = {
+        get entries() { return snapshot(); }, added, changed, newTextParagraphs: [...new Set(newTextParagraphs)],
+        closedParagraphs, updated: [...touched].map(entry => ({ ...entry })), removed
+      };
+      touched = new Set(); removed = [];
+      return out;
+    };
+    function drop(entry) {
+      touched.delete(entry);
+      removed.push(entry.id);
+      const index = entries.lastIndexOf(entry);
+      if (index >= 0) entries.splice(index, 1);
+    }
     function trim() {
-      if (entries.length > limit) entries.splice(0, entries.length - limit);
+      if (entries.length <= limit) return;
+      for (const entry of entries.splice(0, entries.length - limit)) { touched.delete(entry); removed.push(entry.id); }
       const kept = new Set(entries);
       for (const [index, entry] of slots) if (!kept.has(entry)) slots.delete(index);
       const paragraphs = new Set(entries.map(entry => entry.paragraph));
@@ -26,8 +39,13 @@
     }
     function closeParagraph(id) {
       if (closed.has(id) || !asrParagraphs.has(id)) return false;
-      const items = entries.filter(entry => entry.paragraph === id);
-      if (!items.length || items.some(entry => entry.interim)) return false;
+      let found = false;
+      for (let i = entries.length - 1; i >= 0 && entries[i].paragraph >= id; i--) {
+        if (entries[i].paragraph !== id) continue;
+        if (entries[i].interim) return false;
+        found = true;
+      }
+      if (!found) return false;
       closed.add(id);
       return true;
     }
@@ -38,8 +56,10 @@
     }
     function add(text, interim, split) {
       if (split && entries.length) paragraph++;
-      const entry = { id: nextId++, paragraph, text, interim };
+      // `at` is the wall-clock viewing time; gap detection uses the caller's clock.
+      const entry = { id: nextId++, paragraph, text, interim, at: clock() };
       entries.push(entry);
+      touched.add(entry);
       return entry;
     }
     // Results are the complete cumulative Web Speech result list for this run.
@@ -71,12 +91,13 @@
                 lastChange = now;
               }
               entry.text = text;
+              touched.add(entry);
               changed = true;
             }
-            if (entry.interim === final) { entry.interim = !final; changed = true; }
+            if (entry.interim === final) { entry.interim = !final; touched.add(entry); changed = true; }
           }
         } else if (entry && entry.interim) {
-          entries = entries.filter(item => item !== entry);
+          drop(entry);
           slots.delete(index);
           changed = true;
         }
@@ -85,7 +106,7 @@
       // An engine may retract trailing interim results without finalizing them.
       for (const [index, entry] of slots) {
         if (index >= results.length && entry.interim) {
-          entries = entries.filter(item => item !== entry);
+          drop(entry);
           slots.delete(index);
           changed = true;
         }
@@ -117,25 +138,36 @@
       return result(1, true, [entry.paragraph]);
     }
     // Pause/buffering/stop/restart is not evidence of a speech pause. Invalidate
-    // late recognizer callbacks, discard unfinished text, and clear both clocks.
+    // late recognizer callbacks and clear both clocks. Text already shown stays:
+    // recognizers restart often, and dropping the unfinished tail made captions
+    // vanish mid-sentence. It is kept as-is (never re-recognized, so no duplicate).
     function interrupt() {
       run++;
       active = false;
-      const before = entries.length;
-      entries = entries.filter(entry => !entry.interim);
+      let changed = false;
+      for (const entry of slots.values()) {
+        if (!entry.interim) continue;
+        entry.interim = false;
+        touched.add(entry);
+        changed = true;
+      }
       slots.clear();
       finalizedThrough = -1;
       lastChange = null;
       cueEnd = null;
-      trim();
-      return result(0, entries.length !== before);
+      return result(0, changed);
+    }
+    function tail(length) {
+      let text = '';
+      for (let i = entries.length - 1; i >= 0 && text.length < length; i--) text = entries[i].text + text;
+      return text.slice(-length);
     }
     function resetRecognition() {
       interrupt();
       active = true;
       return run;
     }
-    return { updateAsr, appendCue, settle, interrupt, resetRecognition, snapshot };
+    return { updateAsr, appendCue, settle, interrupt, resetRecognition, snapshot, tail };
   }
   return { createHistory };
 });
