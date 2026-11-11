@@ -104,14 +104,15 @@
   .asr:empty { display: none; }
   .asr .bubble { background: rgba(10, 10, 14, .58); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
     border: 1px solid var(--glass-border); border-radius: .6em; padding: .3em .65em;
-    font-size: clamp(14px, 3.4cqw, 28px); line-height: 1.35; font-weight: 600; color: #ffeebe;
+    font-size: clamp(14px, 3.4cqw, 28px); line-height: 1.35; font-weight: 600; color: #d6d6db;
     width: 88%; box-sizing: border-box;
     text-align: left; white-space: pre-line; word-break: auto-phrase; }
   /* 下端揃えで、溢れた古い行を行単位で上に切り落とす(スクロールさせない) */
   .bubble-lines { display: flex; flex-direction: column; justify-content: flex-end;
     max-height: calc(1.35em * 3); overflow: hidden; }
   .bubble-lines p { margin: 0; flex: none; }
-  .interim { color: #d7cba5; }
+  /* カラオケ式: いま発話された語だけ黄色、言い終えた語は白系に戻す */
+  .bubble .saying { color: #ffe27a; }
   .tile.unmuted .asr { bottom: 42px; }
   .caption-note { background: rgba(5,5,7,.85); color: #eee; font-size: 11px; padding: 2px 6px; border-radius: 4px; }
   .bubble[hidden], .caption-note:empty, .tile:not(.unmuted) .caption-note { display: none; }

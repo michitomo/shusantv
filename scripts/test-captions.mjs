@@ -67,6 +67,20 @@ export async function runCaptionTests() {
         await page.eval(`t.rec.emit([['初めの発言',true],['記事追加',true],['次の段落',false]]);`);
         await check('log.children.length', 2);
         await check('back.textContent.includes("新着 2 段落")');
+        // Karaoke highlight: only the words that just arrived; earlier ones go plain.
+        // The previous words fade 500ms after newer ones arrive.
+        await check('[...bubble.querySelectorAll(".saying")].map(n => n.textContent).join("|")', '追加、|次の段落');
+        await check('[...bubble.querySelectorAll(".said")].map(n => n.textContent).join("")', '初めの発言、記事');
+        harness.state.now += 200;
+        await page.eval(`t.rec.emit([['初めの発言',true],['記事追加',true],['次の段落です',false]]);`);
+        await check('[...bubble.querySelectorAll(".saying")].map(n => n.textContent).join("|")', '追加、|次の段落です');
+        harness.state.now += 501;
+        await page.eval(`t.rec.emit([['初めの発言',true],['記事追加',true],['次の段落ですが続き',false]]);`);
+        await check('[...bubble.querySelectorAll(".saying")].map(n => n.textContent).join("|")', 'ですが続き');
+        await check('[...bubble.querySelectorAll(".said")].map(n => n.textContent).join("")', '初めの発言、記事追加、次の段落');
+        harness.state.now += 501;
+        await page.eval(`t.rec.emit([['初めの発言',true],['記事追加',true],['次の段落',false]]);`);
+        await check('bubble.querySelectorAll(".saying").length', 0); // a retraction is not new speech
         await page.eval(`back.dispatchEvent(new Event('click',{bubbles:true}));`);
         await check('focusedId', 'sid9456'); // return click must not toggle the tile
         await check('back.hidden');
@@ -142,7 +156,7 @@ export async function runCaptionTests() {
       if (asr) {
         await page.eval(`t.rec.emit([['新しいソース',true]]); window.lastRec=t.rec;`);
         await check('t.el.querySelector(".bubble").textContent', '新しいソース、');
-        await check('t.cap.text().slice(window.before.length)', '\n[13:35:04] 新しいソース、');
+        await check('t.cap.text().slice(window.before.length)', '\n[13:35:05] 新しいソース、');
         // Clearing forgets the stream's log on screen and in the store.
         await page.eval(`capButtons[2].dispatchEvent(new Event('click'));`);
         await check('t.cap.size > 0');
@@ -152,7 +166,7 @@ export async function runCaptionTests() {
         await page.eval(`window.restored=null; captionStore.load('sangiin:sid9456').then(r => { window.restored=r.length; });`);
         await until('window.restored === 0');
         await page.eval(`t.rec.emit([['新しいソース',true],['消去後',true]]);`);
-        await check('t.cap.text()', '[13:35:04] 消去後、');
+        await check('t.cap.text()', '[13:35:05] 消去後、');
       }
       // A pinned stream stays in the panel regardless of the audio tile.
       await page.eval(`showCaptions('sid9456'); focusedId=null; applyFocus();`);
@@ -181,7 +195,7 @@ export async function runCaptionTests() {
         await page.eval(`longCap.stop(); longTile.stream.name='決算委員会'; window.nextCap=createCaption(longTile); nextCap.updateAsr([{text:'次の会議',final:true}],0);`);
         await until('nextCap.panel.querySelectorAll(".cap-row").length === 2');
         await check('nextCap.panel.querySelector(".cap-divider").textContent', '決算委員会');
-        await check('nextCap.text().split("\\n").slice(1).join("|")', '— 決算委員会 —|[13:35:04] 次の会議、');
+        await check('nextCap.text().split("\\n").slice(1).join("|")', '— 決算委員会 —|[13:35:05] 次の会議、');
         await page.eval('nextCap.stop();');
       }
       assert.deepEqual(harness.errors, []);
