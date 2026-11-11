@@ -13,6 +13,7 @@
   const clockFormat = new Intl.DateTimeFormat('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
   const clock = at => Number.isFinite(at) ? clockFormat.format(at) : '';
   const BUBBLE_PARTS = 6; // The bubble shows only the tail; the log has everything.
+  const FADE = 500; // ms a newly recognized word stays highlighted after newer text arrives
   function create(el, { getContext = () => ({}), isEnabled = () => false, submit = () => {}, cancel = () => {},
     store = null, stream = '', session = newSession() } = {}) {
     const doc = el.ownerDocument;
@@ -25,7 +26,7 @@
     const [log, status, back] = panel.children;
     const history = shusantvCaptionHistory.createHistory(), rows = new Map(), parts = new Map(), unread = new Set(), dirty = new Set();
     const prefix = `caption${++nextView}:`;
-    let following = true, alive = true, settleTimer, saveTimer = null, last = null, previous = null;
+    let following = true, alive = true, settleTimer, fadeTimer, saveTimer = null, last = null, previous = null, latest = null;
     let cleared = 0, newest = 0, generation = 0; // entry ids at or below `cleared` were erased by the viewer
 
     function controls() {
@@ -117,16 +118,47 @@
       cancelRow(row); row.node.remove(); rows.delete(row.id); dirty.delete(row); unread.delete(row.id);
       if (row === last) { last = previous; previous = null; } else if (row === previous) previous = null;
     }
+    // Karaoke-style bubble: only the words that just arrived are highlighted.
+    // `fresh` is the offset in a part's text before which everything has gone plain;
+    // each mark [offset, time] moves it there once FADE has passed. The newest
+    // words keep their highlight until newer ones replace them.
+    function mark(part, value, now) {
+      const before = part.value ?? '';
+      let same = 0;
+      while (same < before.length && same < value.length && before[same] === value[same]) same++;
+      part.value = value;
+      // Punctuation added when a result is finalized is not newly spoken text.
+      if (same === before.length && !/[^\s\p{P}]/u.test(value.slice(same))) return;
+      if (part !== latest) { latest?.marks.push([Infinity, now]); latest = part; }
+      part.fresh = Math.min(part.fresh, same); // rewritten words count as new again
+      part.marks.push([same, now]);
+    }
     function paintBubble() {
-      const nodes = [];
+      clearTimeout(fadeTimer);
+      const now = performance.now(), nodes = [];
+      let next = Infinity;
       for (const row of [previous, last]) {
         if (!row) continue;
         const p = doc.createElement('p');
-        for (const part of [...row.parts.values()].slice(-BUBBLE_PARTS)) p.appendChild(part.node.cloneNode(true));
+        for (const part of [...row.parts.values()].slice(-BUBBLE_PARTS)) {
+          part.marks = part.marks.filter(([offset, time]) => {
+            if (now - time < FADE) { next = Math.min(next, time + FADE); return true; }
+            part.fresh = Math.max(part.fresh, offset);
+            return false;
+          });
+          const value = part.value ?? '', at = Math.min(part.fresh, value.length);
+          for (const [name, text] of [['said', value.slice(0, at)], ['saying', value.slice(at)]]) {
+            if (!text) continue;
+            const span = doc.createElement('span');
+            span.className = name; span.textContent = text;
+            p.appendChild(span);
+          }
+        }
         nodes.push(p);
       }
       lines.replaceChildren(...nodes);
       bubble.hidden = !nodes.length;
+      if (alive && next < Infinity) fadeTimer = setTimeout(paintBubble, Math.max(16, next - now));
     }
 
     // ---- proofreading (opt-in, new closures only) ----
@@ -172,12 +204,13 @@
           const row = rows.get(entry.paragraph) || addRow(entry.paragraph, entry.at);
           let part = parts.get(entry.id);
           if (!part) {
-            part = { row, node: doc.createElement('span') };
+            part = { row, node: doc.createElement('span'), fresh: 0, marks: [] };
             parts.set(entry.id, part); row.parts.set(entry.id, part); row.raw.appendChild(part.node);
           }
           part.text = entry.text; part.interim = entry.interim;
           const value = entry.interim ? entry.text : punct(entry.text);
           if (part.node.textContent !== value) part.node.textContent = value;
+          mark(part, value, performance.now());
           part.node.classList.toggle('interim', entry.interim);
           touched.add(row);
         }
@@ -263,7 +296,7 @@
         for (const row of rows.values()) cancelRow(row);
         clearTimeout(saveTimer); saveTimer = null;
         rows.clear(); parts.clear(); dirty.clear(); unread.clear();
-        cleared = newest; last = previous = null;
+        cleared = newest; last = previous = latest = null;
         log.replaceChildren(); paintBubble();
         following = true; controls();
         return store && stream ? store.clear(stream) : undefined;
@@ -274,7 +307,7 @@
         if (!alive) return;
         if (store && stream) { render(history.interrupt()); flush(); }
         for (const row of rows.values()) cancelRow(row);
-        alive = false; clearTimeout(settleTimer); history.interrupt();
+        alive = false; clearTimeout(settleTimer); clearTimeout(fadeTimer); history.interrupt();
         el.replaceChildren(); panel.remove();
       },
     };
