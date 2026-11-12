@@ -214,16 +214,16 @@
     <div class="proofread-panel">
       <label>方式
         <select id="proofEngine">
-          <option value="openrouter">OpenRouter（クラウド・BYOK）</option>
           <option value="nano">ブラウザ内蔵AI（Gemini Nano・端末内）</option>
+          <option value="openrouter">OpenRouter（クラウド・BYOK）</option>
         </select>
       </label>
       <label><input id="proofread" type="checkbox" disabled> 自動校正（<span id="proofScope">全タイル</span>）</label>
-      <div data-engine="openrouter">
+      <div data-engine="openrouter" hidden>
         <p>ON後に確定するASR段落をOpenRouterとモデル提供元へ送信します。段落ごとに料金が発生し、取消でも課金される場合があります。校正案は元字幕と見比べてください。</p>
         <p>最大4,000字／段落・同時1件。エラーは自動再送しません。</p>
       </div>
-      <div data-engine="nano" hidden>
+      <div data-engine="nano">
         <p>端末内のGemini Nanoで、句読点・改行を補い、言いよどみを削って読みやすくします。字幕は外部に送信せず、料金もかかりません。対象は字幕ログに表示中の会議だけです。</p>
         <p>誤変換の訂正は控えめで、言い換えや脱落が起きることがあります。元字幕と切り替えて確認してください。</p>
         <button id="nanoSetup" type="button" hidden>モデルをダウンロードして準備</button>
@@ -298,7 +298,8 @@ const proofreader = OpenRouterProofreader.createProofreader({
 // 端末内のGemini Nano。方式として選ばれるまでAPIに触れず、ボタンを押すまでモデルをダウンロードしない
 const nano = shusantvNano.createProofreader({ onChange: onProofread });
 const proofEngineSelect = document.getElementById("proofEngine"), nanoSetup = document.getElementById("nanoSetup");
-let proofEngine = localStorage.getItem("shusantv.proofEngine") === "nano" ? "nano" : "openrouter";
+// 既定は端末内のGemini Nano(無料・送信なし)。既定のままでも、利用可否を問い合わせるだけでダウンロードはしない
+let proofEngine = localStorage.getItem("shusantv.proofEngine") === "openrouter" ? "openrouter" : "nano";
 let nanoState = "unknown", nanoProgress = null; // unknown | unavailable | downloadable | downloading | available | ready
 const usingNano = () => proofEngine === "nano";
 const activeProofreader = () => (usingNano() ? nano : proofreader);
