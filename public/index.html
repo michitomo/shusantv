@@ -229,6 +229,7 @@
         <button id="nanoSetup" type="button" hidden>モデルをダウンロードして準備</button>
       </div>
       <span id="proofreadStatus" role="status"></span>
+      <p id="asrPunctuation"></p>
       <a data-engine="openrouter" href="transcript.html#settings" target="_blank" rel="noopener">BYOK・モデル設定（要約と共用）</a>
     </div>
   </details>
@@ -269,6 +270,7 @@ const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 // createMediaElementSource に繋いでも音声がグラフを素通りし GainNode が効かない(WebKit bug 180696)ので、
 // ASR が無い環境では WebAudio を一切使わず video.muted で音声を切り替え、字幕は参議院の公式字幕で代替する。
 // 判定は API の有無だけで行い、Chrome の挙動(available() の結果に関わらず ASR を試みる)は従来どおり
+const asrPunctuation = !!SR && "unspokenPunctuation" in SR.prototype;
 const asrMode = !!(SR && typeof SR.available === "function"); // true=WebAudio+ASR / false=muted切替+公式字幕
 const gate = document.getElementById("gate");
 if (!asrMode) {
@@ -384,6 +386,9 @@ proofEngineSelect.addEventListener("change", () => setProofEngine(proofEngineSel
 window.addEventListener("storage", event => {
   if (event.key === "shusantv.aicfg" || event.key === null) { stopProofreading(); updateProofreadSettings(); }
 });
+document.getElementById("asrPunctuation").textContent = !asrMode ? ""
+  : asrPunctuation ? "音声認識の句読点: 対応（「。」が付いた時点で文ごとに区切ります）"
+  : "音声認識の句読点: このChromeは未対応（区切りは間と確定のタイミング頼みです）";
 updateProofreadSettings();
 refreshNano().then(restoreNano);
 
@@ -553,6 +558,9 @@ function startAsr(t) {
     t.rec = current;
     current.lang = "ja-JP";
     current.continuous = current.interimResults = current.processLocally = true;
+    // 認識エンジン自身に句読点を付けさせる(対応するChromeのみ)。「。」が付けば、結果の確定を
+    // 待たずに文末で段落を閉じられる。無音の長さなど確定のタイミング自体は Web Speech API では変えられない
+    if (asrPunctuation) current.unspokenPunctuation = true;
     applyPhrases(current);
     current.onresult = e => {
       if (!alive || suspended || rec !== current) return;

@@ -15,11 +15,12 @@
   const SPACED = new RegExp(`\\s+(?=[${JA}])|(?<=[${JA}])\\s+`, 'g');
   const joinWords = text => text.replace(SPACED, '');
   // The recognizer keeps one result open for a long time (hundreds of characters
-  // of fast speech) and never punctuates it, so waiting for it to finalize delays
-  // everything downstream. A sentence is taken as finished inside a still-growing
-  // result once a sentence-final form is followed by more words: 「〜ます」「〜です」
-  // 「〜でしょうか」 not continued by a particle (ますが、ですから、ましたら…).
-  const SENTENCE_END = /(?:ます|ました|です|でした|ません)(?![がけのしかとねよらでっ、。])|(?:でしょうか|ますか|ですか|ませんか)(?![とらな、。])|[。！？!?]/gu;
+  // of fast speech), so waiting for it to finalize delays everything downstream.
+  // When the engine punctuates its own output (SpeechRecognition.unspokenPunctuation),
+  // a sentence is finished inside a still-growing result at its 「。」「？」「！」.
+  // Only the engine's punctuation counts: guessing from word endings such as
+  // 「ます」 cuts inside words like 「ますます」.
+  const SENTENCE_END = /[。．！？!?]+/gu;
   // Returns where the first finished sentence of at least `min` characters ends, or
   // 0. `ahead` characters must follow it, so the recognizer has moved on past it.
   function sentenceCut(text, min, ahead) {
