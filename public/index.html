@@ -349,6 +349,15 @@ async function prepareNano() {
   await refreshNano();
   return true;
 }
+// 端末内整形は無料・送信なしなので、ONのまま閉じたら次回もONで始める(モデルがダウンロード済みのときだけ。
+// 勝手にダウンロードはしない)。OpenRouterは課金と外部送信があるので、毎回手動でONにする
+async function restoreNano() {
+  if (!usingNano() || !asrMode || proofreadToggle.checked || localStorage.getItem("shusantv.proofOn") !== "1") return;
+  if (nanoState !== "available" && nanoState !== "ready") return;
+  proofreadToggle.checked = true;
+  if (!nano.ready) await prepareNano();
+  updateProofreadSettings();
+}
 function stopProofreading() {
   proofreadToggle.checked = false;
   for (const t of tiles.values()) t.cap?.cancelProofreading();
@@ -356,25 +365,26 @@ function stopProofreading() {
   nano.clear();
 }
 proofreadToggle.addEventListener("change", async () => {
+  if (usingNano()) localStorage.setItem("shusantv.proofOn", proofreadToggle.checked ? "1" : "0");
   updateProofreadSettings();
   if (!proofreadToggle.checked || proofreadToggle.disabled) return stopProofreading();
   if (usingNano() && !nano.ready) await prepareNano();
 });
-nanoSetup.addEventListener("click", prepareNano);
+nanoSetup.addEventListener("click", () => prepareNano().then(restoreNano));
 function setProofEngine(engine) {
   stopProofreading();
   proofEngine = engine === "nano" ? "nano" : "openrouter";
   localStorage.setItem("shusantv.proofEngine", proofEngine);
   if (!usingNano()) nano.release(); // 使わない間はモデルのメモリを手放す
   updateProofreadSettings();
-  return refreshNano();
+  return refreshNano().then(restoreNano);
 }
 proofEngineSelect.addEventListener("change", () => setProofEngine(proofEngineSelect.value));
 window.addEventListener("storage", event => {
   if (event.key === "shusantv.aicfg" || event.key === null) { stopProofreading(); updateProofreadSettings(); }
 });
 updateProofreadSettings();
-refreshNano();
+refreshNano().then(restoreNano);
 
 // ---- 音声基盤 ----
 // Chromeでは muted な video の音声キャプチャが無音になる既知バグがあるため、
