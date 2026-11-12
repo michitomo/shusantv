@@ -8,6 +8,12 @@
   const punctuate = text => !text || /[。、．，！？!?]$/.test(text) ? text
     : /(です|ます|でした|ました|ません|ございます|であります)(ね|よ)?$/.test(text) ? text + '。' : text + '、';
   const endsSentence = text => /[。．！？!?]$/.test(punctuate(text));
+  // The on-device recognizer often returns Japanese as space-separated words
+  // ("自衛 隊 を 明記 する"). Join them, keeping spaces only inside Latin text; spaced
+  // output also hid watch-list names ("塩 川") from detection.
+  const JA = '\\u3000-\\u30ff\\u3400-\\u9fff\\uff00-\\uffef';
+  const SPACED = new RegExp(`\\s+(?=[${JA}])|(?<=[${JA}])\\s+`, 'g');
+  const joinWords = text => text.replace(SPACED, '');
   // gapMs: silence that ends a paragraph (and, for ASR, sends it to proofreading).
   // sentenceChars: an ASR paragraph of at least this many characters also ends at a
   // finished sentence, so continuous speech is proofread without waiting for a pause.
@@ -84,7 +90,7 @@
       const newTextParagraphs = [], closedParagraphs = [];
       for (let index = 0; index < results.length; index++) {
         if (index <= finalizedThrough) continue;
-        const value = results[index], text = clean(value.text), final = !!value.final;
+        const value = results[index], text = joinWords(clean(value.text)), final = !!value.final;
         let entry = slots.get(index);
         if (text) {
           if (!entry) {
@@ -186,5 +192,5 @@
     }
     return { updateAsr, appendCue, settle, interrupt, resetRecognition, snapshot, tail, gapMs };
   }
-  return { createHistory, punctuate };
+  return { createHistory, punctuate, joinWords };
 });
