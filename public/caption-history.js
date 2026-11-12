@@ -14,36 +14,16 @@
   const JA = '\\u3000-\\u30ff\\u3400-\\u9fff\\uff00-\\uffef';
   const SPACED = new RegExp(`\\s+(?=[${JA}])|(?<=[${JA}])\\s+`, 'g');
   const joinWords = text => text.replace(SPACED, '');
-  // The recognizer keeps one result open for a long time (hundreds of characters
-  // of fast speech) and never punctuates it, so waiting for it to finalize delays
-  // everything downstream. A sentence is taken as finished inside a still-growing
-  // result once a sentence-final form is followed by more words: 「〜ます」「〜です」
-  // 「〜でしょうか」 not continued by a particle (ますが、ですから、ましたら…).
-  const SENTENCE_END = /(?:ます|ました|です|でした|ません)(?![がけのしかとねよらでっ、。])|(?:でしょうか|ますか|ですか|ませんか)(?![とらな、。])|[。！？!?]/gu;
-  // Returns where the first finished sentence of at least `min` characters ends, or
-  // 0. `ahead` characters must follow it, so the recognizer has moved on past it.
-  function sentenceCut(text, min, ahead) {
-    SENTENCE_END.lastIndex = 0;
-    for (let match; (match = SENTENCE_END.exec(text));) {
-      const end = match.index + match[0].length;
-      if (end > text.length - ahead) return 0;
-      if (end >= min) return end;
-    }
-    return 0;
-  }
-  const SENTENCE_AHEAD = 4;
   // gapMs: silence that ends a paragraph (and, for ASR, sends it to proofreading).
   // sentenceChars: an ASR paragraph of at least this many characters also ends at a
   // finished sentence, so continuous speech is proofread without waiting for a pause.
   // paragraphChars: the recognizer finalizes fast speech in long runs that stop
   // mid-sentence; past this length a finalized run ends the paragraph anyway, so a
   // five-minute speech is not one unreadable block.
-  function createHistory({ gapMs = 1500, maxEntries = 20000, clock = Date.now, sentenceChars = 15, paragraphChars = 200 } = {}) {
+  function createHistory({ gapMs = 1500, maxEntries = 20000, clock = Date.now, sentenceChars = 30, paragraphChars = 200 } = {}) {
     const limit = Math.max(1, Math.floor(maxEntries) || 20000);
     let entries = [], nextId = 1, paragraph = 1;
     let slots = new Map(), finalizedThrough = -1, run = 0, active = true;
-    // Per open result: the leading text already split off as finished sentences.
-    let taken = new Map();
     let lastChange = null, lastCue = null, cueEnd = null;
     const closed = new Set(), asrParagraphs = new Set();
     const clean = text => String(text || '').trim();
@@ -112,8 +92,9 @@
       if (!active || token !== run) return result();
       let added = 0, changed = false;
       const newTextParagraphs = [], closedParagraphs = [];
-      // One piece of a result: create or update the entry currently mapped to its slot.
-      function apply(index, text, final) {
+      for (let index = 0; index < results.length; index++) {
+        if (index <= finalizedThrough) continue;
+        const value = results[index], text = joinWords(clean(value.text)), final = !!value.final;
         let entry = slots.get(index);
         if (text) {
           if (!entry) {
@@ -144,26 +125,8 @@
           slots.delete(index);
           changed = true;
         }
-      }
-      for (let index = 0; index < results.length; index++) {
-        if (index <= finalizedThrough) continue;
-        const value = results[index], final = !!value.final;
-        let text = joinWords(clean(value.text));
-        // Sentences already split off stay as they were shown, even if the recognizer
-        // later rewords them; only what follows them is still live.
-        const head = taken.get(index);
-        if (head) text = text.startsWith(head) ? text.slice(head.length) : text.slice(Math.min(head.length, text.length));
-        for (let cut; (cut = sentenceCut(text, sentenceChars, final ? 1 : SENTENCE_AHEAD));) {
-          apply(index, text.slice(0, cut), true);
-          taken.set(index, (taken.get(index) || '') + text.slice(0, cut));
-          slots.delete(index); // the rest of this result continues in a new entry
-          text = text.slice(cut);
-          if (closeParagraph(paragraph)) closedParagraphs.push(paragraph);
-        }
-        apply(index, text, final);
         if (final) {
           finalizedThrough = index;
-          taken.delete(index);
           // Before the next result is added, so it starts a new paragraph.
           if (text && sentenceClosed()) closedParagraphs.push(paragraph);
         }
@@ -176,7 +139,6 @@
           changed = true;
         }
       }
-      for (const index of taken.keys()) if (index >= results.length) taken.delete(index);
       trim();
       for (const id of asrParagraphs) {
         if (id !== paragraph && closeParagraph(id)) closedParagraphs.push(id);
@@ -217,7 +179,6 @@
         changed = true;
       }
       slots.clear();
-      taken.clear();
       finalizedThrough = -1;
       lastChange = null;
       cueEnd = null;
@@ -235,5 +196,5 @@
     }
     return { updateAsr, appendCue, settle, interrupt, resetRecognition, snapshot, tail, gapMs };
   }
-  return { createHistory, punctuate, joinWords, sentenceCut };
+  return { createHistory, punctuate, joinWords };
 });
