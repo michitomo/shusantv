@@ -123,6 +123,12 @@
     background: #14141a; border: 1px solid var(--glass-border); border-radius: 8px; font-size: 12px; line-height: 1.5;
     box-shadow: 0 12px 32px rgba(0,0,0,.6); }
   .proofread-panel a { display: block; color: var(--accent); }
+  .proofread-panel [hidden] { display: none; }
+  .proofread-panel label { display: block; margin-bottom: 6px; }
+  .proofread-panel select, .proofread-panel button { font: inherit; color: #eee; background: rgba(255,255,255,.06);
+    border: 1px solid var(--glass-border); border-radius: 6px; padding: 4px 8px; }
+  .proofread-panel button { display: block; margin: 8px 0; cursor: pointer; border-color: rgba(95,224,183,.5); color: var(--accent); }
+  .proofread-panel button:disabled { opacity: .5; cursor: default; }
   .proofread-panel p { margin: 8px 0; color: #aaa; }
 
   /* 字幕ログ */
@@ -152,6 +158,7 @@
   .cap-divider { display: flex; align-items: center; gap: 8px; margin: 12px 0 6px; color: var(--accent);
     font-size: 11px; font-weight: 700; letter-spacing: .06em; }
   .cap-divider::after { content: ""; flex: 1; height: 1px; background: var(--glass-border); }
+  .caption-corrected { white-space: pre-line; } /* 整形で入った改行(話者・話題の切れ目)を保つ */
   .caption-proof { display: block; font-size: 11px; color: #8a8a94; }
   .caption-proof[hidden] { display: none; }
   .caption-proof button { font: inherit; color: var(--accent); background: transparent; border: 0; padding: 4px 6px; cursor: pointer; }
@@ -205,11 +212,24 @@
   <details id="proofreadSettings">
     <summary>ASR校正</summary>
     <div class="proofread-panel">
-      <label><input id="proofread" type="checkbox" disabled> 自動校正（全タイル）</label>
-      <p>ON後に確定するASR段落をOpenRouterとモデル提供元へ送信します。段落ごとに料金が発生し、取消でも課金される場合があります。校正案は元字幕と見比べてください。</p>
-      <p>最大4,000字／段落・同時1件。エラーは自動再送しません。</p>
+      <label>方式
+        <select id="proofEngine">
+          <option value="openrouter">OpenRouter（クラウド・BYOK）</option>
+          <option value="nano">ブラウザ内蔵AI（Gemini Nano・端末内）</option>
+        </select>
+      </label>
+      <label><input id="proofread" type="checkbox" disabled> 自動校正（<span id="proofScope">全タイル</span>）</label>
+      <div data-engine="openrouter">
+        <p>ON後に確定するASR段落をOpenRouterとモデル提供元へ送信します。段落ごとに料金が発生し、取消でも課金される場合があります。校正案は元字幕と見比べてください。</p>
+        <p>最大4,000字／段落・同時1件。エラーは自動再送しません。</p>
+      </div>
+      <div data-engine="nano" hidden>
+        <p>端末内のGemini Nanoで、句読点・改行を補い、言いよどみを削って読みやすくします。字幕は外部に送信せず、料金もかかりません。対象は字幕ログに表示中の会議だけです。</p>
+        <p>誤変換の訂正は控えめで、言い換えや脱落が起きることがあります。元字幕と切り替えて確認してください。</p>
+        <button id="nanoSetup" type="button" hidden>モデルをダウンロードして準備</button>
+      </div>
       <span id="proofreadStatus" role="status"></span>
-      <a href="transcript.html#settings" target="_blank" rel="noopener">BYOK・モデル設定（要約と共用）</a>
+      <a data-engine="openrouter" href="transcript.html#settings" target="_blank" rel="noopener">BYOK・モデル設定（要約と共用）</a>
     </div>
   </details>
   <span class="status credit">映像:
@@ -238,6 +258,7 @@
 <script src="caption-store.js"></script>
 <script src="caption-view.js"></script>
 <script src="openrouter.js"></script>
+<script src="nano.js"></script>
 <script>
 const grid = document.getElementById("grid");
 const statusEl = document.getElementById("status");
@@ -260,37 +281,100 @@ const proofreadToggle = document.getElementById("proofread");
 const proofreadStatus = document.getElementById("proofreadStatus");
 const proofreadListeners = new Map(), proofreadRunning = new Set();
 let proofreadCost = 0, proofreadUnknownCost = 0;
+let proofreadDone = 0;
+function onProofread(event) {
+  if (event.status === "running") proofreadRunning.add(event.id);
+  if (["done", "error", "cancelled"].includes(event.status) && proofreadRunning.delete(event.id)) {
+    if (event.status === "done") proofreadDone++;
+    if (Number.isFinite(event.cost)) proofreadCost += event.cost;
+    else proofreadUnknownCost++;
+  }
+  proofreadListeners.get(event.id)?.(event);
+  updateProofreadSettings();
+}
 const proofreader = OpenRouterProofreader.createProofreader({
-  getConfig: () => OpenRouterProofreader.readConfig(localStorage),
-  onChange(event) {
-    if (event.status === "running") proofreadRunning.add(event.id);
-    if (["done", "error", "cancelled"].includes(event.status) && proofreadRunning.delete(event.id)) {
-      if (Number.isFinite(event.cost)) proofreadCost += event.cost;
-      else proofreadUnknownCost++;
-    }
-    proofreadListeners.get(event.id)?.(event);
-    updateProofreadSettings();
-  },
+  getConfig: () => OpenRouterProofreader.readConfig(localStorage), onChange: onProofread,
 });
+// 端末内のGemini Nano。方式として選ばれるまでAPIに触れず、ボタンを押すまでモデルをダウンロードしない
+const nano = shusantvNano.createProofreader({ onChange: onProofread });
+const proofEngineSelect = document.getElementById("proofEngine"), nanoSetup = document.getElementById("nanoSetup");
+let proofEngine = localStorage.getItem("shusantv.proofEngine") === "nano" ? "nano" : "openrouter";
+let nanoState = "unknown", nanoProgress = null; // unknown | unavailable | downloadable | downloading | available | ready
+const usingNano = () => proofEngine === "nano";
+const activeProofreader = () => (usingNano() ? nano : proofreader);
+const NANO_STATUS = {
+  unknown: "内蔵AIの状態を確認中…",
+  unavailable: "このブラウザ・端末では内蔵AIを使えません（Chrome 149以降、空き容量22GB以上、VRAM 4GB超またはRAM 16GB以上が目安）",
+  downloadable: "モデル未ダウンロード。「モデルをダウンロードして準備」を押すまでダウンロードしません（数GB・従量制でない回線が必要）",
+  downloading: "モデルをダウンロード中…",
+  available: "モデルはダウンロード済み。ONにすると端末内で整形します",
+};
 function updateProofreadSettings() {
+  proofEngineSelect.value = proofEngine;
+  for (const node of document.querySelectorAll(".proofread-panel [data-engine]")) node.hidden = node.dataset.engine !== proofEngine;
+  document.getElementById("proofScope").textContent = usingNano() ? "字幕ログに表示中の会議" : "全タイル";
+  if (usingNano()) {
+    proofreadToggle.disabled = !asrMode || !["available", "ready"].includes(nanoState);
+    nanoSetup.hidden = !asrMode || !["downloadable", "downloading"].includes(nanoState);
+    nanoSetup.disabled = nanoProgress !== null;
+    proofreadStatus.textContent = !asrMode ? "ブラウザASRのみ対応（公式字幕は対象外）"
+      : nanoProgress !== null ? `モデルを準備中… ${Math.round(nanoProgress * 100)}%`
+      : nanoState === "ready" ? `Gemini Nano（端末内）· この表示中の整形 ${proofreadDone}件` : NANO_STATUS[nanoState];
+    return;
+  }
   const config = OpenRouterProofreader.readConfig(localStorage);
   proofreadToggle.disabled = !asrMode || !config.key;
   proofreadStatus.textContent = !asrMode ? "ブラウザASRのみ対応（公式字幕は送信しません）" : !config.key ? "BYOKキー未設定" :
     `${config.model} · この表示中のAPI返却額 $${proofreadCost.toFixed(4)}${proofreadUnknownCost ? ` + 不明${proofreadUnknownCost}件` : ""}`;
 }
+async function refreshNano() {
+  if (!usingNano()) return;
+  nanoState = await nano.availability();
+  updateProofreadSettings();
+}
+// ユーザー操作(クリック)から呼ぶ。未ダウンロードならここで初めてダウンロードが始まる
+async function prepareNano() {
+  nanoProgress = 0;
+  updateProofreadSettings();
+  try {
+    await nano.prepare(loaded => { nanoProgress = loaded; updateProofreadSettings(); });
+  } catch (error) {
+    proofreadToggle.checked = false;
+    nanoProgress = null;
+    await refreshNano();
+    proofreadStatus.textContent = `内蔵AIを準備できませんでした: ${error?.message || error}`;
+    return false;
+  }
+  nanoProgress = null;
+  await refreshNano();
+  return true;
+}
 function stopProofreading() {
   proofreadToggle.checked = false;
   for (const t of tiles.values()) t.cap?.cancelProofreading();
   proofreader.clear();
+  nano.clear();
 }
-proofreadToggle.addEventListener("change", () => {
+proofreadToggle.addEventListener("change", async () => {
   updateProofreadSettings();
-  if (!proofreadToggle.checked || proofreadToggle.disabled) stopProofreading();
+  if (!proofreadToggle.checked || proofreadToggle.disabled) return stopProofreading();
+  if (usingNano() && !nano.ready) await prepareNano();
 });
+nanoSetup.addEventListener("click", prepareNano);
+function setProofEngine(engine) {
+  stopProofreading();
+  proofEngine = engine === "nano" ? "nano" : "openrouter";
+  localStorage.setItem("shusantv.proofEngine", proofEngine);
+  if (!usingNano()) nano.release(); // 使わない間はモデルのメモリを手放す
+  updateProofreadSettings();
+  return refreshNano();
+}
+proofEngineSelect.addEventListener("change", () => setProofEngine(proofEngineSelect.value));
 window.addEventListener("storage", event => {
   if (event.key === "shusantv.aicfg" || event.key === null) { stopProofreading(); updateProofreadSettings(); }
 });
 updateProofreadSettings();
+refreshNano();
 
 // ---- 音声基盤 ----
 // Chromeでは muted な video の音声キャプチャが無音になる既知バグがあるため、
@@ -349,9 +433,10 @@ function createCaption(t) {
   return shusantvCaptionView.create(t.el.querySelector(".asr"), {
     store: captionStore, stream: `${t.stream.house}:${t.stream.id}`,
     getContext: () => captionContext(t.stream || {}),
-    isEnabled: () => asrMode && proofreadToggle.checked,
-    submit(job, receive) { proofreadListeners.set(job.id, receive); proofreader.submit(job); },
-    cancel(id) { proofreadListeners.delete(id); proofreader.cancel(id); },
+    // 端末内のGemini Nanoは重いので、字幕ログに表示中の会議だけを対象にする
+    isEnabled: () => asrMode && proofreadToggle.checked && (!usingNano() || (nano.ready && t.stream.id === capShown)),
+    submit(job, receive) { proofreadListeners.set(job.id, receive); activeProofreader().submit(job); },
+    cancel(id) { proofreadListeners.delete(id); proofreader.cancel(id); nano.cancel(id); },
   });
 }
 
@@ -371,6 +456,8 @@ function capTarget() {
 function syncCapPanel() {
   if (capPinned && !tiles.has(capPinned)) capPinned = "";
   const id = capTarget(), t = tiles.get(id), view = capPanel.hidden ? null : t?.cap ?? null;
+  // 表示する会議が替わったら、端末内整形の待ち行列は新しい会議に譲る
+  if (id !== capShown && usingNano()) for (const [other, o] of tiles) if (other !== id) o.cap?.cancelProofreading();
   capShown = id;
   const options = [["", t && !capPinned ? `音声に追従 — ${capLabel(t.stream)}` : "音声に追従"],
     ...Array.from(tiles.values(), (o) => [o.stream.id, capLabel(o.stream)])];

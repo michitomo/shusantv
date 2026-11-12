@@ -4,6 +4,7 @@ import { createHarness } from './ui-harness.mjs';
 import { delay } from './ui-fixture.mjs';
 import { runCaptionTests } from './test-captions.mjs';
 import { runProofreadingTests } from './test-proofreading.mjs';
+import { runNanoTests } from './test-nano.mjs';
 const browserMode = process.argv.includes('--browser');
 const harness = await createHarness(browserMode), { state } = harness;
 let page;
@@ -117,4 +118,4 @@ try {
   assert.deepEqual(harness.errors, []);
 } finally { await page?.close(); await harness.close(); }
 
-if (!browserMode) { await runCaptionTests(); await runProofreadingTests(); }
+if (!browserMode) { await runCaptionTests(); await runProofreadingTests(); await runNanoTests(); }
