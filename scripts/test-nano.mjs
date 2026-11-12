@@ -67,8 +67,24 @@ export async function runNanoTests() {
     await check('nano.ready', false);
     await check('!!proofreadToggle.checked', false);
     await check('proofreadStatus.textContent', 'BYOKキー未設定');
+    // Left ON: coming back to the on-device engine starts ON again, with no click
+    // (the model is already downloaded; it is never downloaded on its own).
+    await check('localStorage.getItem("shusantv.proofOn")', '1');
+    await page.eval('setProofEngine("nano"); void 0;');
+    await until('!!proofreadToggle.checked && nano.ready');
+    await check('nanoCalls.create', 2);
+    // Turned OFF by the viewer: it stays off next time.
+    await page.eval('proofreadToggle.checked=false; proofreadToggle.dispatchEvent(new Event("change"));');
+    await check('localStorage.getItem("shusantv.proofOn")', '0');
+    await page.eval('setProofEngine("openrouter"); window.back=setProofEngine("nano"); void 0;');
+    await page.eval('window.back');
+    await check('!!proofreadToggle.checked', false);
+    // The paid cloud engine is never switched on by a saved choice.
+    await page.eval('localStorage.setItem("shusantv.proofOn","1"); window.back=setProofEngine("openrouter"); void 0;');
+    await page.eval('window.back');
+    await check('!!proofreadToggle.checked', false);
     await page.eval('otherCap.stop();');
     assert.deepEqual(harness.errors, []);
-    console.log('PASS on-device proofreading (fake LanguageModel): no download until asked, opt-in, shown stream only, line breaks, release');
+    console.log('PASS on-device proofreading (fake LanguageModel): no download until asked, opt-in, shown stream only, line breaks, release, remembered ON/OFF');
   } finally { await page?.close(); await harness.close(); }
 }
