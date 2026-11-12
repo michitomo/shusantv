@@ -17,7 +17,10 @@
   // gapMs: silence that ends a paragraph (and, for ASR, sends it to proofreading).
   // sentenceChars: an ASR paragraph of at least this many characters also ends at a
   // finished sentence, so continuous speech is proofread without waiting for a pause.
-  function createHistory({ gapMs = 1500, maxEntries = 20000, clock = Date.now, sentenceChars = 30 } = {}) {
+  // paragraphChars: the recognizer finalizes fast speech in long runs that stop
+  // mid-sentence; past this length a finalized run ends the paragraph anyway, so a
+  // five-minute speech is not one unreadable block.
+  function createHistory({ gapMs = 1500, maxEntries = 20000, clock = Date.now, sentenceChars = 30, paragraphChars = 200 } = {}) {
     const limit = Math.max(1, Math.floor(maxEntries) || 20000);
     let entries = [], nextId = 1, paragraph = 1;
     let slots = new Map(), finalizedThrough = -1, run = 0, active = true;
@@ -64,10 +67,11 @@
     }
     function sentenceClosed() {
       const tail = entries[entries.length - 1];
-      if (!tail || tail.paragraph !== paragraph || tail.interim || !endsSentence(tail.text)) return false;
+      if (!tail || tail.paragraph !== paragraph || tail.interim) return false;
       let length = 0;
-      for (let i = entries.length - 1; i >= 0 && entries[i].paragraph === paragraph && length < sentenceChars; i--) length += entries[i].text.length;
-      return length >= sentenceChars && closeParagraph(paragraph);
+      for (let i = entries.length - 1; i >= 0 && entries[i].paragraph === paragraph && length < paragraphChars; i--) length += entries[i].text.length;
+      const enough = endsSentence(tail.text) ? length >= sentenceChars : length >= paragraphChars;
+      return enough && closeParagraph(paragraph);
     }
     // A timer may settle final text, but lifecycle interruptions never do.
     function settle(now = Date.now(), token = run) {

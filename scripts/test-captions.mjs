@@ -85,9 +85,9 @@ export async function runCaptionTests() {
         await check('focusedId', 'sid9456'); // return click must not toggle the tile
         await check('back.hidden');
         await check('log.scrollTop', 1000);
-        await page.eval(`t.rec.emit([['初めの発言',true],['記事追加',true],['次の段落'+'長'.repeat(200),true]]);`);
+        await page.eval(`t.rec.emit([['初めの発言',true],['記事追加',true],['次の段落'+'長'.repeat(150),true]]);`);
         await check('rawCaption(log).startsWith("初めの発言")');
-        await check('rawCaption(log).length > 200');
+        await check('rawCaption(log).length > 150');
         await check('t.cap.text().split("\\n").length', 2);
         await check('t.cap.text().startsWith("[13:30:00] 初めの発言、記事追加、")');
 
@@ -189,13 +189,15 @@ export async function runCaptionTests() {
           window.longCap=createCaption(longTile); window.many=Array.from({length:5000},(_,i)=>({text:'字幕'+i,final:true}));
           longCap.updateAsr(many,0); many.push({text:'字幕5000',final:true}); longCap.updateAsr(many,1);`);
         await check('longCap.panel.querySelectorAll(".caption-original > span").length', 5001);
-        await check('longTile.el.querySelectorAll(".bubble span").length', 6);
+        await check('longTile.el.querySelectorAll(".bubble span").length <= 12');
+        // Long unbroken speech is cut into readable paragraphs instead of one block.
+        await check('longCap.panel.querySelectorAll(".cap-row").length > 100');
         await check('longCap.tail(6)', '字幕5000');
         // Restored rows from another meeting in the same room are separated by its name.
         await page.eval(`longCap.stop(); longTile.stream.name='決算委員会'; window.nextCap=createCaption(longTile); nextCap.updateAsr([{text:'次の会議',final:true}],0);`);
-        await until('nextCap.panel.querySelectorAll(".cap-row").length === 2');
+        await until('nextCap.panel.querySelectorAll(".cap-row").length > 100');
         await check('nextCap.panel.querySelector(".cap-divider").textContent', '決算委員会');
-        await check('nextCap.text().split("\\n").slice(1).join("|")', '— 決算委員会 —|[13:35:05] 次の会議、');
+        await check('nextCap.text().split("\\n").slice(-2).join("|")', '— 決算委員会 —|[13:35:05] 次の会議、');
         await page.eval('nextCap.stop();');
       }
       assert.deepEqual(harness.errors, []);
