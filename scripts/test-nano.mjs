@@ -24,15 +24,16 @@ export async function runNanoTests() {
     await page.eval('gate.dispatchEvent(new Event("click"));');
     await until('!!tiles.get("sid9456").rec');
     await page.eval('window.t=tiles.get("sid9456"); clickTile("sid9456");');
-    // Opening the page with the default engine never touches the built-in model.
-    await check('nanoCalls.availability + nanoCalls.create', 0);
-    await check('proofEngine', 'openrouter');
-    await check('document.querySelector(".proofread-panel [data-engine=nano]").hidden');
+    // The on-device engine is the default, and opening the page never creates a session.
+    await check('proofEngine', 'nano');
+    await check('localStorage.getItem("shusantv.proofEngine")', null);
+    await check('document.querySelector(".proofread-panel [data-engine=nano]").hidden', false);
+    await check('document.querySelector(".proofread-panel [data-engine=openrouter]").hidden');
+    await check('nanoCalls.create', 0);
 
-    // Choosing it only asks about availability; the download waits for the button.
-    await page.eval('setProofEngine("nano"); void 0;');
+    // It only asks about availability; the download waits for the button.
+    await page.eval('refreshNano(); void 0;');
     await until('nanoState === "downloadable"');
-    await check('localStorage.getItem("shusantv.proofEngine")', 'nano');
     await check('nanoCalls.create', 0);
     await check('proofreadToggle.disabled');
     await check('nanoSetup.hidden', false);

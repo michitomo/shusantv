@@ -5,7 +5,7 @@ import { delay } from './ui-fixture.mjs';
 export async function runProofreadingTests() {
   const requests = [], pending = [];
   const harness = await createHarness(false, { asr: true,
-    storage: { 'shusantv.aicfg': JSON.stringify({ key: 'fixture-key-not-real', model: 'fixture-model', provider: '' }) },
+    storage: { 'shusantv.proofEngine': 'openrouter', 'shusantv.aicfg': JSON.stringify({ key: 'fixture-key-not-real', model: 'fixture-model', provider: '' }) },
     fetch(url, options, fallback) {
       if (url !== 'https://openrouter.ai/api/v1/chat/completions') return fallback(url, options);
       requests.push({ ...options, body: JSON.parse(options.body) });
