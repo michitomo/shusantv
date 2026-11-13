@@ -13,7 +13,17 @@
   // output also hid watch-list names ("塩 川") from detection.
   const JA = '\\u3000-\\u30ff\\u3400-\\u9fff\\uff00-\\uffef';
   const SPACED = new RegExp(`\\s+(?=[${JA}])|(?<=[${JA}])\\s+`, 'g');
-  const joinWords = text => text.replace(SPACED, '');
+  // With unspokenPunctuation the engine punctuates Japanese, mostly well, but it
+  // reads a spoken number as a list marker: 「1。つ」「約4 4。0万人」「年5、0 0 0」.
+  // Digits and spelled-out letters also arrive one by one. A 「。」 right after a
+  // digit is never a sentence end here, so it is dropped before anything splits on it.
+  const joinWords = text => text
+    .replace(/^[。．、，\s]+/, '')
+    .replace(/(?<=\d)\s+(?=\d)/g, '')
+    .replace(/(?<=\d)[。．]/g, '')
+    .replace(/(?<=\d)、(?=\d{3}(?!\d))/g, ',')
+    .replace(/\b[A-Z](?:\s+[A-Z]\b)+/g, letters => letters.replace(/\s+/g, ''))
+    .replace(SPACED, '');
   // The recognizer keeps one result open for a long time (hundreds of characters
   // of fast speech), so waiting for it to finalize delays everything downstream.
   // When the engine punctuates its own output (SpeechRecognition.unspokenPunctuation),
@@ -110,7 +120,14 @@
     // End the current ASR paragraph now: the caller had the recognizer finalize at a
     // pause it heard, so this is a real break even without a sentence ending.
     function close() {
-      return result(0, false, [], closeParagraph(paragraph) ? [paragraph] : []);
+      // Stopped mid-sentence, the engine still ends its result with 「。」.
+      const tail = entries[entries.length - 1];
+      let changed = false;
+      if (tail && tail.paragraph === paragraph && !tail.interim && /[。．]$/.test(tail.text)) {
+        const bare = tail.text.replace(/[。．]+$/, '');
+        if (bare && !endsSentence(bare)) { tail.text = bare; touched.add(tail); changed = true; }
+      }
+      return result(0, changed, [], closeParagraph(paragraph) ? [paragraph] : []);
     }
     function add(text, interim, split) {
       if (split && entries.length) paragraph++;

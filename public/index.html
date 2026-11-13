@@ -562,12 +562,12 @@ function startAsr(t) {
   const analyser = actx.createAnalyser?.(), pauses = shusantvPause.createPauseDetector();
   const track = () => dest.stream.getAudioTracks()[0];
   let token = null, samples = null, handoff = null, next = null, nextResults = null, handoffTimer, startedAt = 0;
-  if (analyser) { analyser.fftSize = 1024; t.audio.src.connect(analyser); samples = new Float32Array(analyser.fftSize); }
+  if (analyser) { analyser.fftSize = 4096; /* 約0.09秒ぶん。0.1秒ごとの測定でほぼ切れ目なく音を見る */ t.audio.src.connect(analyser); samples = new Float32Array(analyser.fftSize); }
   function build() {
     const current = new SR();
     current.lang = "ja-JP";
     current.continuous = current.interimResults = current.processLocally = true;
-    current.unspokenPunctuation = true; // 対応エンジンなら句読点が付く(2026-11時点のChromeは日本語では付けない)
+    current.unspokenPunctuation = true; // エンジンに句読点を付けさせる。数字の直後の誤った「。」は表示前に除く
     applyPhrases(current);
     current.onresult = e => {
       if (!alive || suspended) return;
