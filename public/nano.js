@@ -51,6 +51,12 @@
   const letters = text => text.replace(/[\s\p{P}]/gu, '').length;
   const tidy = text => String(text ?? '').replace(/^```[a-z]*\n?|\n?```$/g, '').replace(/^【字幕】\n?/, '')
     .split('\n').map(line => line.trim()).filter(Boolean).join('\n');
+  // The recognizer and the 200-character cap end paragraphs mid-sentence, even mid-word
+  // (「…産業の1」/「つでありまして…」). The model still likes to close such a piece with
+  // 「。」, which reads as a sentence end that was never spoken. Unless the input itself
+  // ends like a sentence, the closing mark is removed.
+  const ENDS_SENTENCE = /(?:です|ます|でした|ました|ません|ください|でしょうか|ですか|ますか|ませんか)(?:ね|よ)?$|[。．！？!?]$/;
+  const unclosed = (input, output) => ENDS_SENTENCE.test(input.trim()) ? output : output.replace(/[。．、，\s]+$/, '');
   // A rewrite that lost or gained much text summarized or invented: keep the original.
   function acceptable(input, output) {
     const before = letters(input), after = letters(output);
@@ -106,7 +112,7 @@
       try {
         requests++;
         const output = tidy(await session.prompt(frame(job.context, part), { signal: job.controller.signal }));
-        return acceptable(part, output) ? output : null;
+        return acceptable(part, output) ? unclosed(part, output) : null;
       } finally { session.destroy?.(); }
     }
     async function pump() {
@@ -161,5 +167,5 @@
       get ready() { return !!base; },
       getStats: () => ({ queued: queue.length, running: active ? 1 : 0, retained: jobs.size, requests }) };
   }
-  return { createProofreader, chunks, acceptable, LIMITS, SYSTEM };
+  return { createProofreader, chunks, acceptable, unclosed, LIMITS, SYSTEM };
 });
