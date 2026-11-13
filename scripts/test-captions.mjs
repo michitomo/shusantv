@@ -133,13 +133,21 @@ export async function runCaptionTests() {
         await check('log.lastChild.querySelector(".caption-original").textContent', '野田');
         await page.eval(`t.rec.emit([['野田大臣',true]]);`);
         await check('log.lastChild.querySelector(".caption-original").textContent', '野田大臣、');
+        // The stopped recognizer returns less than it had shown (「赤字」→「赤。」): the shown text stays.
+        harness.state.now += 2500;
+        await page.eval(`t.rec.emit([['野田大臣',true],['我が国もいつまでもあのデジタル赤字',false]]); window.oldRec=t.rec; t.cutAtPause();
+          window.nextRec=SpeechRecognition.instances.at(-1); nextRec.onstart();
+          oldRec.emit([['野田大臣',true],['我が国もいつまでもあのデジタル赤。',true]]); oldRec.onend();`);
+        await check('log.lastChild.querySelector(".caption-original").textContent', '我が国もいつまでもあのデジタル赤字、');
+        await check('t.rec === window.nextRec');
+        await page.eval(`t.rec.emit([['どんどん増える方で',true]]);`);
         // If a second recognizer cannot be started, it falls back to stop-then-start.
         harness.state.now += 2500;
-        await page.eval(`t.rec.emit([['野田大臣',true],['一部繰り返しになってしまうところがありますが',false]]);
+        await page.eval(`t.rec.emit([['どんどん増える方で',true],['一部繰り返しになってしまうところがありますが',false]]);
           window.oldRec=t.rec; window.realStart=SpeechRecognition.prototype.start; SpeechRecognition.prototype.start=function(){ throw new Error('busy'); };
           window.cut=t.cutAtPause(); SpeechRecognition.prototype.start=window.realStart;`);
         await check('window.cut && window.oldRec.stopped');
-        await page.eval(`oldRec.emit([['野田大臣',true],['一部繰り返しになってしまうところがありますが',true]]); oldRec.onend();`);
+        await page.eval(`oldRec.emit([['どんどん増える方で',true],['一部繰り返しになってしまうところがありますが',true]]); oldRec.onend();`);
         await check('!!t.rec && t.rec !== window.oldRec && !!t.rec.track');
         await page.eval(`t.rec.emit([['続きの発言',true]]);`);
         await check('log.lastChild.querySelector(".caption-original").textContent', '続きの発言、');
@@ -189,7 +197,7 @@ export async function runCaptionTests() {
       if (asr) {
         await page.eval(`t.rec.emit([['新しいソース',true]]); window.lastRec=t.rec;`);
         await check('t.el.querySelector(".bubble").textContent', '新しいソース、');
-        await check('t.cap.text().slice(window.before.length)', '\n[13:35:10] 新しいソース、');
+        await check('t.cap.text().slice(window.before.length)', '\n[13:35:12] 新しいソース、');
         // Clearing forgets the stream's log on screen and in the store.
         await page.eval(`capButtons[2].dispatchEvent(new Event('click'));`);
         await check('t.cap.size > 0');
@@ -199,7 +207,7 @@ export async function runCaptionTests() {
         await page.eval(`window.restored=null; captionStore.load('sangiin:sid9456').then(r => { window.restored=r.length; });`);
         await until('window.restored === 0');
         await page.eval(`t.rec.emit([['新しいソース',true],['消去後',true]]);`);
-        await check('t.cap.text()', '[13:35:10] 消去後、');
+        await check('t.cap.text()', '[13:35:12] 消去後、');
       }
       // A pinned stream stays in the panel regardless of the audio tile.
       await page.eval(`showCaptions('sid9456'); focusedId=null; applyFocus();`);
@@ -230,7 +238,7 @@ export async function runCaptionTests() {
         await page.eval(`longCap.stop(); longTile.stream.name='決算委員会'; window.nextCap=createCaption(longTile); nextCap.updateAsr([{text:'次の会議',final:true}],0);`);
         await until('nextCap.panel.querySelectorAll(".cap-row").length > 100');
         await check('nextCap.panel.querySelector(".cap-divider").textContent', '決算委員会');
-        await check('nextCap.text().split("\\n").slice(-2).join("|")', '— 決算委員会 —|[13:35:10] 次の会議、');
+        await check('nextCap.text().split("\\n").slice(-2).join("|")', '— 決算委員会 —|[13:35:12] 次の会議、');
         await page.eval('nextCap.stop();');
       }
       assert.deepEqual(harness.errors, []);

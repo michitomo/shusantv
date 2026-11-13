@@ -42,6 +42,18 @@
     }
     return 0;
   }
+  // A recognizer stopped on request finalizes less than it had already shown: the
+  // last word comes back cut short and closed with 「。」 (shown 「デジタル赤字」, final
+  // 「デジタル赤。」). When the final is just the shown text minus its tail — allowing
+  // the last two characters to differ — the fuller text that was on screen is kept.
+  function fuller(shown, final) {
+    const before = joinWords(String(shown || '').trim());
+    const after = joinWords(String(final || '').trim()).replace(/[。．、，]+$/, '');
+    if (before.length <= after.length) return final;
+    let same = 0;
+    while (same < after.length && before[same] === after[same]) same++;
+    return same >= after.length - 2 ? shown : final;
+  }
   const SENTENCE_AHEAD = 4;
   // gapMs: silence that ends a paragraph (and, for ASR, sends it to proofreading).
   // sentenceChars: an ASR paragraph of at least this many characters also ends at a
@@ -266,5 +278,5 @@
     }
     return { updateAsr, appendCue, settle, pending, close, interrupt, resetRecognition, snapshot, tail, gapMs };
   }
-  return { createHistory, punctuate, joinWords, sentenceCut };
+  return { createHistory, punctuate, joinWords, sentenceCut, fuller };
 });

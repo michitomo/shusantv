@@ -569,9 +569,14 @@ function startAsr(t) {
     current.continuous = current.interimResults = current.processLocally = true;
     current.unspokenPunctuation = true; // エンジンに句読点を付けさせる。数字の直後の誤った「。」は表示前に除く
     applyPhrases(current);
+    let shown = [];
     current.onresult = e => {
       if (!alive || suspended) return;
-      const results = Array.from(e.results, r => ({ text: r[0].transcript, final: r.isFinal }));
+      let results = Array.from(e.results, r => ({ text: r[0].transcript, final: r.isFinal }));
+      // こちらが止めた認識は、表示済みより短い確定結果を返す(語尾が欠けて「。」が付く)。表示済みの方を残す
+      if (handoff === current) results = results.map((r, i) =>
+        r.final && shown[i] && !shown[i].final ? { ...r, text: shusantvCaptionHistory.fuller(shown[i].text, r.text) } : r);
+      shown = results;
       if (next === current) { nextResults = results; return; } // 前の認識が確定し終えるまで預かる
       if (rec !== current) return;
       cap.updateAsr(results, performance.now(), token);
