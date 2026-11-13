@@ -111,20 +111,38 @@ export async function runCaptionTests() {
         await page.eval(`window.oldRec.emit([['旧セッション',true]]); t.rec.emit([['再起動後',true]]);`);
         await check('rawCaption(log).includes("旧セッション")', false);
         await check('log.children.length', 2);
-        // At a pause the page has the recognizer finalize, closes that paragraph and restarts at once.
+        // At a pause the page starts the next recognizer first, then has the old one finalize,
+        // closes that paragraph and switches over, so no speech is missed in between.
         await check('t.cutAtPause()', false); // nothing unfinished yet
         await page.eval(`window.base=[['再起動後',true]]; t.rec.emit([...base,['大臣のご所見をいただければと思い',false]]);`);
         await check('t.cutAtPause()', false); // the recognizer only just started
         harness.state.now += 2500;
-        await page.eval(`window.oldRec=t.rec; window.cut=t.cutAtPause(); window.again=t.cutAtPause();`);
-        await check('window.cut && !window.again && window.oldRec.stopped');
-        await page.eval(`oldRec.onerror({error:'aborted'}); oldRec.emit([...base,['大臣のご所見をいただければと思いますが',true]]); oldRec.onend();`);
-        await check('!!t.rec && t.rec !== window.oldRec'); // restarted without the usual one-second wait
-        await check('log.lastChild.querySelector(".caption-original").textContent.endsWith("大臣のご所見をいただければと思いますが、")');
-        await page.eval(`window.rows=log.children.length; t.rec.emit([['野田大臣',false]]);`);
+        await page.eval(`window.oldRec=t.rec; window.count=SpeechRecognition.instances.length; window.cut=t.cutAtPause(); window.again=t.cutAtPause();
+          window.nextRec=SpeechRecognition.instances.at(-1);`);
+        await check('window.cut && !window.again && SpeechRecognition.instances.length === window.count + 1');
+        await check('!!window.nextRec.track && !window.oldRec.stopped'); // the new one is listening before the old one is stopped
+        await check('t.rec === window.oldRec');
+        // Speech resumes before the old one has finished: the new one's words are held, not lost.
+        await page.eval(`nextRec.emit([['野田',false]]); nextRec.onstart();`);
+        await check('window.oldRec.stopped');
+        await check('rawCaption(log).includes("野田")', false);
+        await page.eval(`oldRec.onerror({error:'aborted'}); oldRec.emit([...base,['大臣のご所見をいただければと思いますが',true]]); window.rows=log.children.length; oldRec.onend();`);
+        await check('t.rec === window.nextRec');
         await check('log.children.length === window.rows + 1');
-        await check('log.lastChild.querySelector(".caption-original").textContent', '野田大臣');
+        await check('log.lastChild.previousSibling.querySelector(".caption-original").textContent.endsWith("大臣のご所見をいただければと思いますが、")');
+        await check('log.lastChild.querySelector(".caption-original").textContent', '野田');
         await page.eval(`t.rec.emit([['野田大臣',true]]);`);
+        await check('log.lastChild.querySelector(".caption-original").textContent', '野田大臣、');
+        // If a second recognizer cannot be started, it falls back to stop-then-start.
+        harness.state.now += 2500;
+        await page.eval(`t.rec.emit([['野田大臣',true],['一部繰り返しになってしまうところがありますが',false]]);
+          window.oldRec=t.rec; window.realStart=SpeechRecognition.prototype.start; SpeechRecognition.prototype.start=function(){ throw new Error('busy'); };
+          window.cut=t.cutAtPause(); SpeechRecognition.prototype.start=window.realStart;`);
+        await check('window.cut && window.oldRec.stopped');
+        await page.eval(`oldRec.emit([['野田大臣',true],['一部繰り返しになってしまうところがありますが',true]]); oldRec.onend();`);
+        await check('!!t.rec && t.rec !== window.oldRec && !!t.rec.track');
+        await page.eval(`t.rec.emit([['続きの発言',true]]);`);
+        await check('log.lastChild.querySelector(".caption-original").textContent', '続きの発言、');
 
         // Re-showing the log (panel reopened / stream switched) returns to the live end.
         await page.eval(`log.scrollTop=50; log.dispatchEvent(new Event('scroll'));`);
@@ -171,7 +189,7 @@ export async function runCaptionTests() {
       if (asr) {
         await page.eval(`t.rec.emit([['新しいソース',true]]); window.lastRec=t.rec;`);
         await check('t.el.querySelector(".bubble").textContent', '新しいソース、');
-        await check('t.cap.text().slice(window.before.length)', '\n[13:35:07] 新しいソース、');
+        await check('t.cap.text().slice(window.before.length)', '\n[13:35:10] 新しいソース、');
         // Clearing forgets the stream's log on screen and in the store.
         await page.eval(`capButtons[2].dispatchEvent(new Event('click'));`);
         await check('t.cap.size > 0');
@@ -181,7 +199,7 @@ export async function runCaptionTests() {
         await page.eval(`window.restored=null; captionStore.load('sangiin:sid9456').then(r => { window.restored=r.length; });`);
         await until('window.restored === 0');
         await page.eval(`t.rec.emit([['新しいソース',true],['消去後',true]]);`);
-        await check('t.cap.text()', '[13:35:07] 消去後、');
+        await check('t.cap.text()', '[13:35:10] 消去後、');
       }
       // A pinned stream stays in the panel regardless of the audio tile.
       await page.eval(`showCaptions('sid9456'); focusedId=null; applyFocus();`);
@@ -212,7 +230,7 @@ export async function runCaptionTests() {
         await page.eval(`longCap.stop(); longTile.stream.name='決算委員会'; window.nextCap=createCaption(longTile); nextCap.updateAsr([{text:'次の会議',final:true}],0);`);
         await until('nextCap.panel.querySelectorAll(".cap-row").length > 100');
         await check('nextCap.panel.querySelector(".cap-divider").textContent', '決算委員会');
-        await check('nextCap.text().split("\\n").slice(-2).join("|")', '— 決算委員会 —|[13:35:07] 次の会議、');
+        await check('nextCap.text().split("\\n").slice(-2).join("|")', '— 決算委員会 —|[13:35:10] 次の会議、');
         await page.eval('nextCap.stop();');
       }
       assert.deepEqual(harness.errors, []);
