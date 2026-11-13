@@ -567,7 +567,8 @@ function startAsr(t) {
     const current = new SR();
     current.lang = "ja-JP";
     current.continuous = current.interimResults = current.processLocally = true;
-    current.unspokenPunctuation = true; // エンジンに句読点を付けさせる。数字の直後の誤った「。」は表示前に除く
+    // unspokenPunctuation(エンジンによる句読点)は使わない。日本語では「、」はほとんど付かず、数字の直後と
+    // 止めた結果の末尾に誤った「。」が付くだけだった(「1。つ」「デジタル赤。」)。句読点は整形側で補う
     applyPhrases(current);
     let shown = [];
     current.onresult = e => {
