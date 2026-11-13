@@ -555,15 +555,83 @@ function startAsr(t) {
   let rec = null, timer, errors = 0, alive = true, suspended = t.video.paused === true || t.captionSourceChanging;
   // 息継ぎの間で確定させる(試験的): 認識エンジンは早口の発言を数百字ぶん未確定のまま抱え、確定の
   // タイミングは API では変えられない。そこで認識に渡すのと同じ音声の音量から約0.5秒の無音を見つけ、
-  // その瞬間に stop() でエンジン自身に確定させ、すぐ認識を再開する。確定結果はエンジンが出すので
-  // 継ぎ目はずれないが、再開までの一瞬の音声は認識されない。字幕ログに表示中の会議だけで行う
+  // stop() でエンジン自身に確定させて段落を閉じる。確定結果はエンジンが出すので継ぎ目の文字はずれない。
+  // 止めてから次を始めると話し始めの音が抜けるので、次の認識(next)を先に起動し、聞き始めてから
+  // 前の認識を止める。重なった一瞬は両方が聞くので、欠落の代わりに語の断片が重複することがある。
+  // 字幕ログに表示中の会議だけで行う
   const analyser = actx.createAnalyser?.(), pauses = shusantvPause.createPauseDetector();
-  let token = null, samples = null, handoff = null, startedAt = 0;
+  const track = () => dest.stream.getAudioTracks()[0];
+  let token = null, samples = null, handoff = null, next = null, nextResults = null, handoffTimer, startedAt = 0;
   if (analyser) { analyser.fftSize = 1024; t.audio.src.connect(analyser); samples = new Float32Array(analyser.fftSize); }
+  function build() {
+    const current = new SR();
+    current.lang = "ja-JP";
+    current.continuous = current.interimResults = current.processLocally = true;
+    current.unspokenPunctuation = true; // 対応エンジンなら句読点が付く(2026-11時点のChromeは日本語では付けない)
+    applyPhrases(current);
+    current.onresult = e => {
+      if (!alive || suspended) return;
+      const results = Array.from(e.results, r => ({ text: r[0].transcript, final: r.isFinal }));
+      if (next === current) { nextResults = results; return; } // 前の認識が確定し終えるまで預かる
+      if (rec !== current) return;
+      cap.updateAsr(results, performance.now(), token);
+      detect(t, cap.tail(100));
+      errors = 0;
+    };
+    current.onerror = e => {
+      if (!alive) return;
+      if (next === current) { next = nextResults = null; return; } // 先行起動の失敗は、止めてから始める従来の流れに任せる
+      if (rec !== current) return;
+      if (handoff === current && ["aborted", "no-speech"].includes(e.error)) return; // こちらが止めた結果で、故障ではない
+      errors++;
+      cap.message(e.error === "network"
+        ? "⚠ 音声認識モデルの準備後はChromeの完全再起動が必要な場合があります"
+        : `⚠ ASR: ${e.error}`);
+    };
+    current.onend = () => {
+      if (!alive) return;
+      if (next === current) { next = nextResults = null; return; }
+      if (rec !== current) return;
+      const cut = handoff === current;
+      handoff = null;
+      clearTimeout(handoffTimer);
+      rec = t.rec = null;
+      cap.interrupt(); // 認識再起動までの待ち時間は発言の間に数えない。
+      if (cut) { // 間で確定させた分は1段落として閉じ、待たずに次へ
+        cap.close();
+        const fresh = next, heard = nextResults;
+        next = nextResults = null;
+        if (suspended) fresh?.abort();
+        else if (fresh) { activate(fresh); if (heard) { cap.updateAsr(heard, performance.now(), token); detect(t, cap.tail(100)); } }
+        else start();
+        return;
+      }
+      if (!suspended && errors <= 5) timer = setTimeout(start, 1000);
+    };
+    return current;
+  }
+  function activate(current) {
+    rec = t.rec = current;
+    token = cap.resetRecognition();
+    startedAt = performance.now();
+  }
   t.cutAtPause = () => {
-    if (!rec || handoff || performance.now() - startedAt < 2000 || cap.pending() < 15) return false;
-    handoff = rec;
-    try { rec.stop(); } catch { handoff = null; return false; }
+    if (!rec || handoff || next || performance.now() - startedAt < 2000 || cap.pending() < 15) return false;
+    const old = handoff = rec;
+    const stopOld = () => {
+      clearTimeout(handoffTimer);
+      if (handoff !== old || rec !== old || old.stopping) return;
+      old.stopping = true;
+      try { old.stop(); } catch { old.abort(); }
+      handoffTimer = setTimeout(() => { if (rec === old) old.abort(); }, 3000); // 確定が返らないときの保険
+    };
+    try {
+      const fresh = build();
+      fresh.onstart = stopOld;
+      fresh.start(track());
+      next = fresh; nextResults = null;
+      handoffTimer = setTimeout(stopOld, 600); // 起動の合図が来ない場合もここで切り替える
+    } catch { next = nextResults = null; stopOld(); }
     return true;
   };
   const listen = analyser && setInterval(() => {
@@ -573,48 +641,17 @@ function startAsr(t) {
   }, 100);
   function start() {
     if (!alive || suspended || rec || errors > 5) return;
-    const current = rec = new SR();
-    token = cap.resetRecognition();
-    startedAt = performance.now();
-    t.rec = current;
-    current.lang = "ja-JP";
-    current.continuous = current.interimResults = current.processLocally = true;
-    // 認識エンジン自身に句読点を付けさせる(対応するChromeのみ)。「。」が付けば、結果の確定を
-    // 待たずに文末で段落を閉じられる。無音の長さなど確定のタイミング自体は Web Speech API では変えられない
-    current.unspokenPunctuation = true; // 対応エンジンなら句読点が付く(2026-11時点のChromeは日本語では付けない)
-    applyPhrases(current);
-    current.onresult = e => {
-      if (!alive || suspended || rec !== current) return;
-      cap.updateAsr(Array.from(e.results, r => ({ text: r[0].transcript, final: r.isFinal })), performance.now(), token);
-      detect(t, cap.tail(100));
-      errors = 0;
-    };
-    current.onerror = e => {
-      if (!alive || rec !== current) return;
-      if (handoff === current && ["aborted", "no-speech"].includes(e.error)) return; // こちらが止めた結果で、故障ではない
-      errors++;
-      cap.message(e.error === "network"
-        ? "⚠ 音声認識モデルの準備後はChromeの完全再起動が必要な場合があります"
-        : `⚠ ASR: ${e.error}`);
-    };
-    current.onend = () => {
-      if (!alive || rec !== current) return;
-      const cut = handoff === current;
-      handoff = null;
-      rec = t.rec = null;
-      cap.interrupt(); // 認識再起動までの待ち時間は発言の間に数えない。
-      if (cut) { cap.close(); if (!suspended) start(); return; } // 間で確定させた分は1段落として閉じ、待たずに再開
-      if (!suspended && errors <= 5) timer = setTimeout(start, 1000);
-    };
-    try { current.start(dest.stream.getAudioTracks()[0]); cap.message("🎤 認識待機…"); }
+    const current = build();
+    activate(current);
+    try { current.start(track()); cap.message("🎤 認識待機…"); }
     catch (error) { rec = t.rec = null; cap.interrupt(); cap.message(`⚠ ASR start: ${error.message}`); }
   }
   function interrupt() {
-    clearTimeout(timer);
-    const previous = rec;
-    rec = t.rec = handoff = null;
+    clearTimeout(timer); clearTimeout(handoffTimer);
+    const previous = rec, pending = next;
+    rec = t.rec = handoff = next = nextResults = null;
     cap.interrupt();
-    previous?.abort();
+    previous?.abort(); pending?.abort();
   }
   const pause = () => { suspended = true; interrupt(); };
   const play = () => { if (!t.captionSourceChanging) { suspended = false; start(); } };
