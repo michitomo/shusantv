@@ -81,6 +81,7 @@ export async function createHarness(browserMode = false, { captionMedia = true, 
           constructor() { this.constructor.instances.push(this); }
           start(track) { this.track = track; }
           abort() { this.aborted = true; this.onend?.(); }
+          stop() { this.stopped = true; }
           emit(results) { this.onresult?.({ results: results.map(([text, final = false]) => Object.assign([{ transcript: text }], { isFinal: final })) }); }
         };
         const node = () => ({ gain: { value: 0 }, connect(target) { return target; }, disconnect() { this.disconnected = true; } });

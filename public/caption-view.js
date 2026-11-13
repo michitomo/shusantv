@@ -272,7 +272,8 @@
         settleTimer = setTimeout(() => render(history.settle(performance.now(), token)), history.gapMs);
       },
       settle: (now, token) => render(history.settle(now, token)),
-      pause: (now, token) => render(history.pause(now, token)),
+      pending: () => history.pending(),
+      close: () => render(history.close()),
       append(text, start, end) { const update = history.appendCue(text, start, end); render(update); return update.changed; },
       interrupt() { clearTimeout(settleTimer); render(history.interrupt()); },
       resetRecognition() { clearTimeout(settleTimer); render(history.interrupt()); return history.resetRecognition(); },

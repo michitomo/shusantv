@@ -111,16 +111,20 @@ export async function runCaptionTests() {
         await page.eval(`window.oldRec.emit([['旧セッション',true]]); t.rec.emit([['再起動後',true]]);`);
         await check('rawCaption(log).includes("旧セッション")', false);
         await check('log.children.length', 2);
-        // A pause the page heard closes the paragraph while the result is still open.
-        await page.eval(`window.base=[['再起動後',true]]; t.rec.emit([...base,['大臣のご所見をいただければと思います',false]]);`);
-        harness.state.now += 500;
-        await page.eval(`t.cap.pause(performance.now());`);
-        await check('log.querySelectorAll(".interim").length', 0);
-        await page.eval(`t.rec.emit([...base,['大臣のご所見をいただければと思います野田大臣はい',false]]);`);
-        await check('log.lastChild.querySelector(".caption-original").textContent', '野田大臣はい');
-        await check('log.lastChild.previousSibling.querySelector(".caption-original").textContent.endsWith("大臣のご所見をいただければと思います。")');
-        await page.eval(`t.rec.emit([...base,['大臣のご所見をいただければと思います野田大臣はい',true]]);`);
-        await check('rawCaption(log).endsWith("大臣のご所見をいただければと思います。野田大臣はい、")');
+        // At a pause the page has the recognizer finalize, closes that paragraph and restarts at once.
+        await check('t.cutAtPause()', false); // nothing unfinished yet
+        await page.eval(`window.base=[['再起動後',true]]; t.rec.emit([...base,['大臣のご所見をいただければと思い',false]]);`);
+        await check('t.cutAtPause()', false); // the recognizer only just started
+        harness.state.now += 2500;
+        await page.eval(`window.oldRec=t.rec; window.cut=t.cutAtPause(); window.again=t.cutAtPause();`);
+        await check('window.cut && !window.again && window.oldRec.stopped');
+        await page.eval(`oldRec.onerror({error:'aborted'}); oldRec.emit([...base,['大臣のご所見をいただければと思いますが',true]]); oldRec.onend();`);
+        await check('!!t.rec && t.rec !== window.oldRec'); // restarted without the usual one-second wait
+        await check('log.lastChild.querySelector(".caption-original").textContent.endsWith("大臣のご所見をいただければと思いますが、")');
+        await page.eval(`window.rows=log.children.length; t.rec.emit([['野田大臣',false]]);`);
+        await check('log.children.length === window.rows + 1');
+        await check('log.lastChild.querySelector(".caption-original").textContent', '野田大臣');
+        await page.eval(`t.rec.emit([['野田大臣',true]]);`);
 
         // Re-showing the log (panel reopened / stream switched) returns to the live end.
         await page.eval(`log.scrollTop=50; log.dispatchEvent(new Event('scroll'));`);
@@ -167,7 +171,7 @@ export async function runCaptionTests() {
       if (asr) {
         await page.eval(`t.rec.emit([['新しいソース',true]]); window.lastRec=t.rec;`);
         await check('t.el.querySelector(".bubble").textContent', '新しいソース、');
-        await check('t.cap.text().slice(window.before.length)', '\n[13:35:05] 新しいソース、');
+        await check('t.cap.text().slice(window.before.length)', '\n[13:35:07] 新しいソース、');
         // Clearing forgets the stream's log on screen and in the store.
         await page.eval(`capButtons[2].dispatchEvent(new Event('click'));`);
         await check('t.cap.size > 0');
@@ -177,7 +181,7 @@ export async function runCaptionTests() {
         await page.eval(`window.restored=null; captionStore.load('sangiin:sid9456').then(r => { window.restored=r.length; });`);
         await until('window.restored === 0');
         await page.eval(`t.rec.emit([['新しいソース',true],['消去後',true]]);`);
-        await check('t.cap.text()', '[13:35:05] 消去後、');
+        await check('t.cap.text()', '[13:35:07] 消去後、');
       }
       // A pinned stream stays in the panel regardless of the audio tile.
       await page.eval(`showCaptions('sid9456'); focusedId=null; applyFocus();`);
@@ -208,7 +212,7 @@ export async function runCaptionTests() {
         await page.eval(`longCap.stop(); longTile.stream.name='決算委員会'; window.nextCap=createCaption(longTile); nextCap.updateAsr([{text:'次の会議',final:true}],0);`);
         await until('nextCap.panel.querySelectorAll(".cap-row").length > 100');
         await check('nextCap.panel.querySelector(".cap-divider").textContent', '決算委員会');
-        await check('nextCap.text().split("\\n").slice(-2).join("|")', '— 決算委員会 —|[13:35:05] 次の会議、');
+        await check('nextCap.text().split("\\n").slice(-2).join("|")', '— 決算委員会 —|[13:35:07] 次の会議、');
         await page.eval('nextCap.stop();');
       }
       assert.deepEqual(harness.errors, []);
