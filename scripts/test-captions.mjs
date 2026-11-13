@@ -111,6 +111,17 @@ export async function runCaptionTests() {
         await page.eval(`window.oldRec.emit([['旧セッション',true]]); t.rec.emit([['再起動後',true]]);`);
         await check('rawCaption(log).includes("旧セッション")', false);
         await check('log.children.length', 2);
+        // A pause the page heard closes the paragraph while the result is still open.
+        await page.eval(`window.base=[['再起動後',true]]; t.rec.emit([...base,['大臣のご所見をいただければと思います',false]]);`);
+        harness.state.now += 500;
+        await page.eval(`t.cap.pause(performance.now());`);
+        await check('log.querySelectorAll(".interim").length', 0);
+        await page.eval(`t.rec.emit([...base,['大臣のご所見をいただければと思います野田大臣はい',false]]);`);
+        await check('log.lastChild.querySelector(".caption-original").textContent', '野田大臣はい');
+        await check('log.lastChild.previousSibling.querySelector(".caption-original").textContent.endsWith("大臣のご所見をいただければと思います。")');
+        await page.eval(`t.rec.emit([...base,['大臣のご所見をいただければと思います野田大臣はい',true]]);`);
+        await check('rawCaption(log).endsWith("大臣のご所見をいただければと思います。野田大臣はい、")');
+
         // Re-showing the log (panel reopened / stream switched) returns to the live end.
         await page.eval(`log.scrollTop=50; log.dispatchEvent(new Event('scroll'));`);
         await check('back.hidden', false);
