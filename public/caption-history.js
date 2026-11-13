@@ -13,10 +13,10 @@
   // output also hid watch-list names ("塩 川") from detection.
   const JA = '\\u3000-\\u30ff\\u3400-\\u9fff\\uff00-\\uffef';
   const SPACED = new RegExp(`\\s+(?=[${JA}])|(?<=[${JA}])\\s+`, 'g');
-  // With unspokenPunctuation the engine punctuates Japanese, mostly well, but it
-  // reads a spoken number as a list marker: 「1。つ」「約4 4。0万人」「年5、0 0 0」.
-  // Digits and spelled-out letters also arrive one by one. A 「。」 right after a
-  // digit is never a sentence end here, so it is dropped before anything splits on it.
+  // Digits and spelled-out letters can arrive one by one (「4 4 0万人」「A I」), and an
+  // engine that punctuates treats a spoken number as a list marker (「1。つ」
+  // 「年5、0 0 0」). A 「。」 right after a digit is never a sentence end here, so it is
+  // dropped before anything splits on it.
   const joinWords = text => text
     .replace(/^[。．、，\s]+/, '')
     .replace(/(?<=\d)\s+(?=\d)/g, '')
@@ -108,26 +108,6 @@
     function settle(now = Date.now(), token = run) {
       if (!active || token !== run || lastChange === null || now - lastChange < gapMs) return result();
       return result(0, false, [], closeParagraph(paragraph) ? [paragraph] : []);
-    }
-    // Characters of unfinished text in the open paragraph (0 when its tail is final).
-    function pending() {
-      const tail = entries[entries.length - 1];
-      if (!active || !tail || !tail.interim || tail.paragraph !== paragraph) return 0;
-      let length = 0;
-      for (let i = entries.length - 1; i >= 0 && entries[i].paragraph === paragraph; i--) length += entries[i].text.length;
-      return length;
-    }
-    // End the current ASR paragraph now: the caller had the recognizer finalize at a
-    // pause it heard, so this is a real break even without a sentence ending.
-    function close() {
-      // Stopped mid-sentence, the engine still ends its result with 「。」.
-      const tail = entries[entries.length - 1];
-      let changed = false;
-      if (tail && tail.paragraph === paragraph && !tail.interim && /[。．]$/.test(tail.text)) {
-        const bare = tail.text.replace(/[。．]+$/, '');
-        if (bare && !endsSentence(bare)) { tail.text = bare; touched.add(tail); changed = true; }
-      }
-      return result(0, changed, [], closeParagraph(paragraph) ? [paragraph] : []);
     }
     function add(text, interim, split) {
       if (split && entries.length) paragraph++;
@@ -264,7 +244,7 @@
       active = true;
       return run;
     }
-    return { updateAsr, appendCue, settle, pending, close, interrupt, resetRecognition, snapshot, tail, gapMs };
+    return { updateAsr, appendCue, settle, interrupt, resetRecognition, snapshot, tail, gapMs };
   }
   return { createHistory, punctuate, joinWords, sentenceCut };
 });
