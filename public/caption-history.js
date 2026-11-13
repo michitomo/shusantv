@@ -99,6 +99,24 @@
       if (!active || token !== run || lastChange === null || now - lastChange < gapMs) return result();
       return result(0, false, [], closeParagraph(paragraph) ? [paragraph] : []);
     }
+    // The speaker paused (the caller heard silence) while the recognizer still holds
+    // the result open. Once the text has also stopped changing for `stableMs` — the
+    // words before the pause have arrived — end the paragraph there; what the
+    // recognizer adds to this result afterwards starts a new one.
+    function pause(now = Date.now(), token = run, stableMs = 400) {
+      if (!active || token !== run || lastChange === null || now - lastChange < stableMs) return result();
+      const tail = entries[entries.length - 1];
+      if (!tail || !tail.interim || tail.paragraph !== paragraph) return result();
+      let slot = null, length = 0;
+      for (const [index, entry] of slots) if (entry === tail) slot = index;
+      for (let i = entries.length - 1; i >= 0 && entries[i].paragraph === paragraph && length < sentenceChars; i--) length += entries[i].text.length;
+      if (slot === null || length < sentenceChars) return result();
+      tail.interim = false;
+      touched.add(tail);
+      taken.set(slot, (taken.get(slot) || '') + tail.text);
+      slots.delete(slot);
+      return result(0, true, [], closeParagraph(paragraph) ? [paragraph] : []);
+    }
     function add(text, interim, split) {
       if (split && entries.length) paragraph++;
       // `at` is the wall-clock viewing time; gap detection uses the caller's clock.
@@ -234,7 +252,7 @@
       active = true;
       return run;
     }
-    return { updateAsr, appendCue, settle, interrupt, resetRecognition, snapshot, tail, gapMs };
+    return { updateAsr, appendCue, settle, pause, interrupt, resetRecognition, snapshot, tail, gapMs };
   }
   return { createHistory, punctuate, joinWords, sentenceCut };
 });
